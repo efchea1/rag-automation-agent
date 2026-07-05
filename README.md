@@ -8,36 +8,38 @@ guided-remediation runbook matching (with human approval gates), and
 downstream automation into ITSM, identity, and Power Automate — exposed as
 a Python library, a CLI, and an authenticated REST API.
 
-Built as a working demonstration of the capabilities described in
-Covetrus' **Sr. IT AI/Automation Engineer** posting, revised after an
-honest gap review against the full job description (see "What changed"
-below).
+A reference implementation of enterprise IT operations automation built
+around RAG and agentic workflows: bridging everyday IT operations
+(identity, service management, incident response, onboarding/offboarding)
+with modern AI patterns (RAG, agentic orchestration, self-service
+automation, event-driven triage).
 
-## Coverage map against the job description
+## Capability map
 
-| Job description ask | Where it's implemented |
+| Enterprise IT automation capability | Where it's implemented |
 |---|---|
 | RAG pipelines over documentation, KB, tickets, logs | `document_loader.py` (PDF/DOCX/HTML/text) + `chunker.py` + `retriever.py` + `vector_store.py` |
 | Agentic AI workflows: automated triage, root-cause assistance, guided remediation | `agent.py` (rewrite → retrieve → answer → triage → action plan) + `runbooks/executor.py` (matched, previewable, approval-gated remediation) |
-| Integrate LLMs (OpenAI, Anthropic, **Microsoft**) | `llm_client.py` — `AnthropicClient`, `OpenAIClient`, **`AzureOpenAIClient`** (key or Azure AD auth), all behind one `LLMClient` interface |
-| Microsoft Power Automate / Power Platform | `power_automate.py` — triggers HTTP-request-triggered flows; wired into `events/bus.py` for auto-notification on high-urgency incidents |
+| Multi-provider LLM integration (OpenAI, Anthropic, Microsoft) | `llm_client.py` — `AnthropicClient`, `OpenAIClient`, `AzureOpenAIClient` (key or Azure AD auth), all behind one `LLMClient` interface |
+| Microsoft Power Automate / Power Platform integration | `power_automate.py` — triggers HTTP-request-triggered flows; wired into `events/bus.py` for auto-notification on high-urgency incidents |
 | Cloud infrastructure: AWS and/or Azure | `cloud/aws_client.py` (S3 doc source, Secrets Manager) and `cloud/azure_client.py` (Blob Storage doc source, Key Vault) |
 | Identity and Access Management platforms | `identity/lifecycle.py` — Microsoft Graph client for create/disable accounts, group membership, session revocation |
 | ITSM tools | `itsm/servicenow_client.py` — creates/updates incidents via the ServiceNow Table API; auto-invoked on high-urgency triage |
-| Automate employee onboarding/offboarding across identity, access, collaboration, endpoint systems | `identity/lifecycle.py` (`create_user`, `add_to_group`, `disable_account`, `revoke_sessions`, `remove_from_all_groups`) |
+| Employee onboarding/offboarding automation across identity, access, collaboration, endpoint systems | `identity/lifecycle.py` (`create_user`, `add_to_group`, `disable_account`, `revoke_sessions`, `remove_from_all_groups`) |
 | Knowledge retrieval systems, vector databases | `vector_store.py` — real ChromaDB-backed collection with a fully offline TF-IDF+SVD embedding function (swap-in-ready for a hosted model) |
-| Event-driven design / "AI-driven, agentic, and event-based operations" | `events/bus.py` — pub/sub `EventBus` + `agent_event_handler` that runs the agent and auto-escalates from an event, not just a chat message |
-| Establish standards for AI Ops / security & data protection / responsible AI / operational resilience | `governance/policies.yaml` (explicit standards doc) + `governance/pii_redaction.py` + `governance/audit_log.py` + `governance/api_security.py` |
+| Event-driven, AI-driven agentic operations | `events/bus.py` — pub/sub `EventBus` + `agent_event_handler` that runs the agent and auto-escalates from an event, not just a chat message |
+| AI Ops / security & data protection / responsible AI / operational resilience standards | `governance/policies.yaml` (explicit standards doc) + `governance/pii_redaction.py` + `governance/audit_log.py` + `governance/api_security.py` |
 | Governance, risk, compliance for enterprise AI | `governance/` package as a whole; every agent run is auditable and PII-redacted before reaching an LLM provider |
-| Secure, scalable, observable, maintainable | API key auth + rate limiting (`governance/api_security.py`), full step trace on every run, structured JSONL audit log |
-| Python, RESTful APIs | `api.py` — FastAPI service, now with `X-API-Key` auth and per-key rate limiting |
-| Augment IT teams, not replace them | Guided remediation defaults to `dry_run=True` and refuses to execute without `approved_by` — a human stays in the loop for anything with side effects |
+| Secure, scalable, observable, maintainable design | API key auth + rate limiting (`governance/api_security.py`), full step trace on every run, structured JSONL audit log |
+| Python, RESTful APIs | `api.py` — FastAPI service with `X-API-Key` auth and per-key rate limiting |
+| Augmenting IT teams rather than replacing them | Guided remediation defaults to `dry_run=True` and refuses to execute without `approved_by` — a human stays in the loop for anything with side effects |
 
-## What changed from the first version (honest self-review)
+## Development notes: gaps identified and closed, bugs found and fixed
 
-A hiring manager who read the first version of this project closely would
-have noticed real gaps. Rather than leave them as caveats, here's what was
-missing and what was added to close each one:
+An earlier iteration of this project covered the core RAG/agentic loop but
+had real gaps against a full enterprise IT automation scope. Rather than
+leave them as caveats, here's what was missing and what was added to close
+each one:
 
 - **No Microsoft LLM provider** → added `AzureOpenAIClient` (API key or
   Azure AD auth via `DefaultAzureCredential`).
@@ -63,28 +65,52 @@ missing and what was added to close each one:
   now be triggered by an event (e.g. a log-alert or a webhook), not only
   by a person typing a question in a chat box.
 - **No governance/compliance tooling** → added `governance/policies.yaml`
-  (an explicit, versioned standards document matching the JD's "establish
-  standards for AI Ops / security / responsible AI / operational
-  resilience" bullet list almost verbatim), `pii_redaction.py`, and
-  `audit_log.py`.
+  (an explicit, versioned standards document covering AI Ops, security,
+  responsible AI usage, and operational resilience), `pii_redaction.py`,
+  and `audit_log.py`.
 - **"Guided remediation" was just prose in a chat response** → added
   `runbooks/executor.py`: the agent now matches a query to a concrete,
   named runbook, previews its steps, and only executes them given explicit
   human approval (`approved_by=...`). This is the actual mechanism behind
-  "augment IT teams, not replace them."
+  augmenting an IT team rather than replacing it.
 - **No API security** → added `governance/api_security.py`: API key
   auth and a per-key token-bucket rate limiter, both wired into `api.py`.
 
-Two bugs were caught and fixed while building this, worth naming rather
-than hiding:
-1. The mock LLM's step dispatch originally sniffed system-prompt text for
-   keywords; the action-plan prompt happened to contain the word "triage"
-   and got misrouted to the triage handler. Fixed by having `agent.py`
-   pass an explicit `step` tag instead of relying on string matching.
-2. The audit logger originally recorded `AgentResponse.original_query`
-   (the raw, pre-redaction text) even when PII redaction had already run
-   — meaning redacted emails/phone numbers were still ending up in the
-   audit log. Fixed so the audit record always uses the redacted query.
+Four bugs were caught and fixed during development and live testing,
+worth naming rather than hiding:
+
+1. **Mock LLM step misrouting.** The mock LLM's step dispatch originally
+   sniffed system-prompt text for keywords; the action-plan prompt
+   happened to contain the word "triage" and got misrouted to the triage
+   handler. Fixed by having `agent.py` pass an explicit `step` tag instead
+   of relying on string matching.
+2. **Audit log recorded pre-redaction text.** The audit logger originally
+   recorded `AgentResponse.original_query` (the raw, pre-redaction text)
+   even when PII redaction had already run — meaning redacted emails and
+   phone numbers were still ending up in the audit log. Fixed so the audit
+   record always uses the redacted query.
+3. **Triage classification silently fell back on real LLM output.** Found
+   via live testing with a real Anthropic API key: real models frequently
+   wrap JSON responses in markdown code fences (` ```json ... ``` `) even
+   when explicitly told to return only JSON, which broke the original
+   `json.loads()` call on every single triage call and silently degraded
+   every classification to a generic low-urgency default. Fixed by adding
+   `RagAgent._extract_json()`, which strips code fences and, if that's
+   still not valid JSON, falls back to extracting the substring between
+   the first `{` and last `}`. Covered by regression tests using exactly
+   the fenced-JSON shape that caused the failure.
+4. **Runbook matching picked the wrong runbook for full outages.** Found
+   via live testing: a full VPN gateway outage query ("everyone is locked
+   out, the gateway is completely down") contains the word "vpn," which
+   alone was enough to wrongly match a single-user certificate-regeneration
+   runbook — nonsensical for an outage affecting everyone. Fixed by adding
+   per-runbook exclusion phrases (`Runbook.exclude_keywords`) and
+   tie-detection in `find_matching_runbook()`: if the top score is tied
+   across multiple runbooks, the matcher now declines to guess and returns
+   `None` rather than arbitrarily picking one. Covered by regression tests
+   for both the specific failing query and a synthetic tie case.
+
+
 
 ## Architecture
 
@@ -145,14 +171,13 @@ than hiding:
   `MockGraphIdentityClient`, `MockServiceNowClient`,
   `MockPowerAutomateClient` — the entire pipeline, including the
   event-driven auto-escalation path, is unit tested end-to-end with zero
-  API keys, zero tenant credentials, and zero network access. 37 tests,
+  API keys, zero tenant credentials, and zero network access. 41 tests,
   all passing (`tests/test_pipeline.py` + `tests/test_extended_capabilities.py`).
 - **Governance as a file, not a slide.** `governance/policies.yaml` is a
-  machine-readable standards document mapping directly onto the JD's
-  "Establish standards for: AI Ops / Security and data protection /
-  Responsible AI usage / Operational resilience" line — the kind of
-  artifact that could actually gate a CI/CD promotion, not just describe
-  intent.
+  machine-readable standards document covering AI Ops, security and data
+  protection, responsible AI usage, and operational resilience — the kind
+  of artifact that could actually gate a CI/CD promotion, not just
+  describe intent.
 - **PII redaction is regex-based on purpose.** Deterministic and
   auditable beats "the model decided" for a security control. It's a
   first line of defense, not a guarantee — real deployments should pair
@@ -166,7 +191,7 @@ pip install -r requirements.txt
 # Generate the three generic sample documents (PDF, DOCX, HTML)
 python scripts/make_sample_docs.py
 
-# Run the full test suite (37 tests, no API keys or credentials needed)
+# Run the full test suite (41 tests, no API keys or credentials needed)
 pytest -v
 
 # Try it from the CLI (uses a real LLM if ANTHROPIC_API_KEY, AZURE_OPENAI_*,
@@ -266,7 +291,7 @@ scripts/
   demo_cli.py             interactive CLI demo
 sample_docs/               generated sample PDF/DOCX/HTML files
 tests/
-  test_pipeline.py          13 tests: loading, chunking, retrieval, core agent loop
-  test_extended_capabilities.py   24 tests: vector DB, PII redaction, audit log, event bus,
+  test_pipeline.py          15 tests: loading, chunking, retrieval, core agent loop, triage JSON parsing
+  test_extended_capabilities.py   26 tests: vector DB, PII redaction, audit log, event bus,
                                    ITSM, identity lifecycle, Power Automate, runbooks
 ```
