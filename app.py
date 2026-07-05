@@ -101,20 +101,34 @@ uploaded_files = st.file_uploader(
 if uploaded_files:
     newly_ingested = []
     for uf in uploaded_files:
-        file_key = f"{uf.name}:{uf.size}"
+        # Security: uf.name is attacker-controlled (whatever the uploading
+        # browser reports). Without sanitizing it, a crafted filename like
+        # "../../../etc/something" or an absolute path could write outside
+        # the intended upload directory (path traversal / arbitrary write).
+        # Normalize backslashes to forward slashes first, then take the
+        # basename — Path(...).name alone only treats "/" as a separator on
+        # POSIX, so a Windows-style "..\\..\\evil.txt" would slip through
+        # unmodified there; this app runs locally on Windows as well as on
+        # Linux (Streamlit Cloud), so sanitization must not assume either OS.
+        safe_name = os.path.basename(uf.name.replace("\\", "/"))
+        if not safe_name:
+            st.error("Skipped a file with an invalid name.")
+            continue
+
+        file_key = f"{safe_name}:{uf.size}"
         if file_key in st.session_state.ingested_uploads:
             continue  # already indexed this exact file this session; don't re-ingest on every rerun
 
-        dest_path = Path(st.session_state.upload_dir) / uf.name
+        dest_path = Path(st.session_state.upload_dir) / safe_name
         with open(dest_path, "wb") as f:
             f.write(uf.getbuffer())
 
         try:
             n = agent.ingest_path(str(dest_path))
             st.session_state.ingested_uploads.add(file_key)
-            newly_ingested.append((uf.name, n))
+            newly_ingested.append((safe_name, n))
         except ValueError as exc:
-            st.error(f"Couldn't index `{uf.name}`: {exc}")
+            st.error(f"Couldn't index `{safe_name}`: {exc}")
 
     for name, n in newly_ingested:
         st.success(f"Indexed `{name}` — {n} chunk(s) added to the index.")
