@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head><title>KB0042 - VPN Connection Troubleshooting</title></head>
+<body>
+<nav>Knowledge Base &gt; Networking</nav>
+<h1>KB0042: VPN Connection Troubleshooting</h1>
+<p>Applies to: GlobalProtect client, all supported OS versions.</p>
+
+<h2>Symptom</h2>
+<p>User reports VPN client fails to connect, hangs at "Connecting..." or
+returns error code 3 ("Unable to connect to the service").</p>
+
+<h2>Common Root Causes</h2>
+<ul>
+<li>Expired or revoked client certificate (most common - roughly 40% of tickets)</li>
+<li>Local firewall or endpoint security software blocking the VPN adapter</li>
+<li>Stale DNS cache pointing to a decommissioned gateway</li>
+<li>Gateway-side capacity saturation during peak hours (8-9am local time)</li>
+</ul>
+
+<h2>Triage Steps</h2>
+<ol>
+<li>Check the identity provider for certificate expiration on the user's account.</li>
+<li>Have the user run the built-in diagnostic tool and capture the log bundle.</li>
+<li>If certificate is valid, check gateway health dashboard for regional saturation.</li>
+<li>If none of the above resolve it within 15 minutes, escalate to Network Engineering with the log bundle attached.</li>
+</ol>
+
+<h2>Self-Service Fix</h2>
+<p>For expired certificates, users can regenerate their own client certificate
+from the self-service identity portal without opening a ticket. This is the
+single highest-impact self-service deflection opportunity in the VPN
+category.</p>
+
+<footer>Last reviewed: internal IT knowledge base</footer>
+</body>
+</html>

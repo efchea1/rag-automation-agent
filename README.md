@@ -1,0 +1,272 @@
+# RAG Automation Agent
+
+A working Retrieval-Augmented Generation (RAG) agent that ingests PDF, Word
+(.docx), and HTML documents, indexes them in a real vector database plus
+hybrid keyword search, and runs a full agentic pipeline over them: query
+rewriting, retrieval, grounded/cited answering, triage classification,
+guided-remediation runbook matching (with human approval gates), and
+downstream automation into ITSM, identity, and Power Automate — exposed as
+a Python library, a CLI, and an authenticated REST API.
+
+Built as a working demonstration of the capabilities described in
+Covetrus' **Sr. IT AI/Automation Engineer** posting, revised after an
+honest gap review against the full job description (see "What changed"
+below).
+
+## Coverage map against the job description
+
+| Job description ask | Where it's implemented |
+|---|---|
+| RAG pipelines over documentation, KB, tickets, logs | `document_loader.py` (PDF/DOCX/HTML/text) + `chunker.py` + `retriever.py` + `vector_store.py` |
+| Agentic AI workflows: automated triage, root-cause assistance, guided remediation | `agent.py` (rewrite → retrieve → answer → triage → action plan) + `runbooks/executor.py` (matched, previewable, approval-gated remediation) |
+| Integrate LLMs (OpenAI, Anthropic, **Microsoft**) | `llm_client.py` — `AnthropicClient`, `OpenAIClient`, **`AzureOpenAIClient`** (key or Azure AD auth), all behind one `LLMClient` interface |
+| Microsoft Power Automate / Power Platform | `power_automate.py` — triggers HTTP-request-triggered flows; wired into `events/bus.py` for auto-notification on high-urgency incidents |
+| Cloud infrastructure: AWS and/or Azure | `cloud/aws_client.py` (S3 doc source, Secrets Manager) and `cloud/azure_client.py` (Blob Storage doc source, Key Vault) |
+| Identity and Access Management platforms | `identity/lifecycle.py` — Microsoft Graph client for create/disable accounts, group membership, session revocation |
+| ITSM tools | `itsm/servicenow_client.py` — creates/updates incidents via the ServiceNow Table API; auto-invoked on high-urgency triage |
+| Automate employee onboarding/offboarding across identity, access, collaboration, endpoint systems | `identity/lifecycle.py` (`create_user`, `add_to_group`, `disable_account`, `revoke_sessions`, `remove_from_all_groups`) |
+| Knowledge retrieval systems, vector databases | `vector_store.py` — real ChromaDB-backed collection with a fully offline TF-IDF+SVD embedding function (swap-in-ready for a hosted model) |
+| Event-driven design / "AI-driven, agentic, and event-based operations" | `events/bus.py` — pub/sub `EventBus` + `agent_event_handler` that runs the agent and auto-escalates from an event, not just a chat message |
+| Establish standards for AI Ops / security & data protection / responsible AI / operational resilience | `governance/policies.yaml` (explicit standards doc) + `governance/pii_redaction.py` + `governance/audit_log.py` + `governance/api_security.py` |
+| Governance, risk, compliance for enterprise AI | `governance/` package as a whole; every agent run is auditable and PII-redacted before reaching an LLM provider |
+| Secure, scalable, observable, maintainable | API key auth + rate limiting (`governance/api_security.py`), full step trace on every run, structured JSONL audit log |
+| Python, RESTful APIs | `api.py` — FastAPI service, now with `X-API-Key` auth and per-key rate limiting |
+| Augment IT teams, not replace them | Guided remediation defaults to `dry_run=True` and refuses to execute without `approved_by` — a human stays in the loop for anything with side effects |
+
+## What changed from the first version (honest self-review)
+
+A hiring manager who read the first version of this project closely would
+have noticed real gaps. Rather than leave them as caveats, here's what was
+missing and what was added to close each one:
+
+- **No Microsoft LLM provider** → added `AzureOpenAIClient` (API key or
+  Azure AD auth via `DefaultAzureCredential`).
+- **No Power Automate / Power Platform code at all** → added
+  `power_automate.py`, a client that triggers HTTP-request-triggered
+  flows, wired into the event-driven layer so high-urgency incidents
+  actually fire a flow.
+- **No AWS/Azure cloud integration** → added `cloud/aws_client.py`
+  (S3, Secrets Manager) and `cloud/azure_client.py` (Blob Storage, Key
+  Vault), both usable as alternate document sources for `RagAgent.ingest_path`.
+- **Retrieval was TF-IDF only, no real vector database** → added
+  `vector_store.py`, a real ChromaDB collection with persistence support.
+  The embedding function is still offline-by-default (TF-IDF+SVD) so the
+  system runs with zero external dependencies, but the storage/query layer
+  is now a genuine vector database, not a workaround.
+- **No actual onboarding/offboarding automation, just a document about
+  it** → added `identity/lifecycle.py`, a Microsoft Graph client that
+  actually creates/disables accounts and manages group membership
+  (dry-run by default; real calls require explicit `dry_run=False`).
+- **No ITSM integration** → added `itsm/servicenow_client.py`; the event
+  handler auto-opens a ServiceNow incident when triage urgency is high.
+- **No event-driven architecture** → added `events/bus.py`; the agent can
+  now be triggered by an event (e.g. a log-alert or a webhook), not only
+  by a person typing a question in a chat box.
+- **No governance/compliance tooling** → added `governance/policies.yaml`
+  (an explicit, versioned standards document matching the JD's "establish
+  standards for AI Ops / security / responsible AI / operational
+  resilience" bullet list almost verbatim), `pii_redaction.py`, and
+  `audit_log.py`.
+- **"Guided remediation" was just prose in a chat response** → added
+  `runbooks/executor.py`: the agent now matches a query to a concrete,
+  named runbook, previews its steps, and only executes them given explicit
+  human approval (`approved_by=...`). This is the actual mechanism behind
+  "augment IT teams, not replace them."
+- **No API security** → added `governance/api_security.py`: API key
+  auth and a per-key token-bucket rate limiter, both wired into `api.py`.
+
+Two bugs were caught and fixed while building this, worth naming rather
+than hiding:
+1. The mock LLM's step dispatch originally sniffed system-prompt text for
+   keywords; the action-plan prompt happened to contain the word "triage"
+   and got misrouted to the triage handler. Fixed by having `agent.py`
+   pass an explicit `step` tag instead of relying on string matching.
+2. The audit logger originally recorded `AgentResponse.original_query`
+   (the raw, pre-redaction text) even when PII redaction had already run
+   — meaning redacted emails/phone numbers were still ending up in the
+   audit log. Fixed so the audit record always uses the redacted query.
+
+## Architecture
+
+```
+ PDF/DOCX/HTML/TXT         S3 / Blob Storage
+        │                        │
+        ▼                        ▼
+ document_loader.py  ◄── cloud/aws_client.py, cloud/azure_client.py
+        │
+        ▼
+ chunker.py            sentence-aware overlapping chunks
+        │
+        ├──► retriever.py     HybridRetriever (BM25 + TF-IDF), zero-dependency default
+        └──► vector_store.py  ChromaVectorStore (real vector DB, offline embedding fn)
+        │
+        ▼
+ agent.py               RagAgent.run(query):
+                           1. redact PII (governance/pii_redaction.py)
+                           2. rewrite query
+                           3. retrieve top-k chunks
+                           4. answer with citations
+                           5. triage / classify
+                           6. generate action plan
+                           7. match a guided-remediation runbook, if any
+                           8. write an audit record (governance/audit_log.py)
+        │
+        ├──► api.py                    FastAPI: /ingest, /query, /health (API-key auth + rate limit)
+        ├──► scripts/demo_cli.py        interactive CLI
+        ├──► events/bus.py              EventBus — trigger the agent from a log alert / webhook,
+        │                                not just a typed question; auto-escalates on high urgency
+        │       ├──► itsm/servicenow_client.py     auto-opens an incident
+        │       └──► power_automate.py             auto-triggers a Flow (e.g. notify on-call)
+        └──► runbooks/executor.py       matched runbook → preview → human approval → execute
+                ├──► identity/lifecycle.py   (Microsoft Graph: revoke sessions, disable account, ...)
+                └──► itsm/servicenow_client.py (open a follow-up ticket)
+```
+
+## Design choices worth knowing about
+
+- **Hybrid retrieval and a real vector database, both offline by
+  default.** `HybridRetriever` (BM25 + TF-IDF) and `ChromaVectorStore`
+  (persistent, real vector DB) both work with zero external API calls out
+  of the box — deliberately, because IT operations content often has
+  data-residency constraints. Swapping in a hosted embeddings model
+  (sentence-transformers, OpenAI, Voyage, Azure OpenAI embeddings) is a
+  one-class change on either path.
+- **Provider-agnostic LLM client, including the Microsoft path.**
+  `agent.py` never imports a vendor SDK directly. `AzureOpenAIClient`
+  supports both static API keys and Azure AD auth via
+  `DefaultAzureCredential`, since enterprise tenants frequently mandate AD
+  auth over long-lived keys.
+- **Every mutating integration defaults to dry-run.** `identity/lifecycle.py`
+  Graph calls, `runbooks/executor.py` execution, and the Power Automate
+  client all either default to `dry_run=True` or require an explicit
+  `approved_by`. Nothing in this codebase mutates a real tenant, ticket
+  system, or account by accident.
+- **Mocks for every external integration.** `MockLLMClient`,
+  `MockGraphIdentityClient`, `MockServiceNowClient`,
+  `MockPowerAutomateClient` — the entire pipeline, including the
+  event-driven auto-escalation path, is unit tested end-to-end with zero
+  API keys, zero tenant credentials, and zero network access. 37 tests,
+  all passing (`tests/test_pipeline.py` + `tests/test_extended_capabilities.py`).
+- **Governance as a file, not a slide.** `governance/policies.yaml` is a
+  machine-readable standards document mapping directly onto the JD's
+  "Establish standards for: AI Ops / Security and data protection /
+  Responsible AI usage / Operational resilience" line — the kind of
+  artifact that could actually gate a CI/CD promotion, not just describe
+  intent.
+- **PII redaction is regex-based on purpose.** Deterministic and
+  auditable beats "the model decided" for a security control. It's a
+  first line of defense, not a guarantee — real deployments should pair
+  it with provider data-handling agreements and real DLP tooling.
+
+## Running it
+
+```bash
+pip install -r requirements.txt
+
+# Generate the three generic sample documents (PDF, DOCX, HTML)
+python scripts/make_sample_docs.py
+
+# Run the full test suite (37 tests, no API keys or credentials needed)
+pytest -v
+
+# Try it from the CLI (uses a real LLM if ANTHROPIC_API_KEY, AZURE_OPENAI_*,
+# or OPENAI_API_KEY is set in the environment; otherwise falls back to mock)
+python scripts/demo_cli.py
+
+# Or run it as a REST API with auth enabled
+export RAG_AGENT_API_KEYS="some-secret-key"
+uvicorn api:app --reload --port 8000
+
+curl -X POST localhost:8000/ingest -H "X-API-Key: some-secret-key" \
+  -H "Content-Type: application/json" -d '{"path": "sample_docs"}'
+
+curl -X POST localhost:8000/query -H "X-API-Key: some-secret-key" \
+  -H "Content-Type: application/json" -d '{"query": "VPN keeps failing with error code 3"}'
+```
+
+### Wiring in the enterprise integrations
+
+Everything below is real, runnable code — it just needs real credentials
+to talk to real systems (all included clients raise a clear error if
+credentials are missing, rather than silently no-op'ing):
+
+```python
+from rag_agent.agent import RagAgent
+from rag_agent.identity.lifecycle import GraphIdentityClient
+from rag_agent.itsm.servicenow_client import ServiceNowClient
+from rag_agent.power_automate import PowerAutomateClient
+from rag_agent.runbooks.executor import build_default_runbooks
+from rag_agent.events.bus import EventBus, Event, agent_event_handler
+from rag_agent.governance.audit_log import AuditLogger
+
+graph = GraphIdentityClient()       # reads AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
+itsm = ServiceNowClient()           # reads SERVICENOW_INSTANCE_URL / _USERNAME / _PASSWORD
+power_automate = PowerAutomateClient()  # reads POWER_AUTOMATE_FLOW_<NAME> env vars
+
+agent = RagAgent(
+    runbook_executor=build_default_runbooks(graph, itsm),
+    audit_logger=AuditLogger(log_path="audit.jsonl"),
+)
+agent.ingest_path("sample_docs")
+
+bus = EventBus()
+bus.subscribe("log_alert", agent_event_handler(agent, itsm_client=itsm, power_automate_client=power_automate))
+bus.publish(Event(event_type="log_alert", payload={"text": "VPN gateway down, urgent"}, source="log_watcher"))
+# -> agent triages it, and because urgency=high, auto-opens a ServiceNow incident
+#    and triggers the "notify_oncall" Power Automate flow, with no human needing
+#    to have typed the question at all.
+```
+
+## What I'd still build next for a production deployment
+
+- A real (non-TF-IDF) embedding model behind `EmbeddingBackend` /
+  `vector_store.py` once network/model access is available — this repo
+  ships an offline embedding function specifically so it runs with zero
+  external dependencies out of the box.
+- Move the API's rate-limiter state out of single-process memory into
+  something shared (Redis, API Gateway, Azure APIM) for a multi-instance
+  deployment.
+- Expand `runbooks/executor.py` beyond the two demo runbooks to cover
+  every KB article with a well-defined remediation, and connect the
+  approval gate to a real approval UI (e.g. a Teams adaptive card via
+  Power Automate) instead of a Python keyword argument.
+- Replace the in-memory `EventBus` with a durable one (Azure Service Bus,
+  AWS EventBridge/SQS) for production event-driven operation.
+
+## Repo layout
+
+```
+rag_agent/
+  document_loader.py   PDF / DOCX / HTML / text -> normalized Document
+  chunker.py             Document -> overlapping Chunks
+  retriever.py             Chunks -> HybridRetriever (BM25 + TF-IDF)
+  vector_store.py           Chunks -> ChromaVectorStore (real vector DB)
+  llm_client.py               LLMClient interface: Anthropic / OpenAI / Azure OpenAI / Mock
+  agent.py                      RagAgent: full orchestration + PII redaction + audit + runbook matching
+  power_automate.py               Power Automate flow trigger client
+  cloud/
+    aws_client.py                  S3 document source, Secrets Manager
+    azure_client.py                 Blob Storage document source, Key Vault
+  identity/
+    lifecycle.py                     Microsoft Graph onboarding/offboarding automation
+  itsm/
+    servicenow_client.py               ServiceNow incident creation/update
+  events/
+    bus.py                               EventBus + agent_event_handler (event-driven ops)
+  runbooks/
+    executor.py                           Guided remediation: match -> preview -> approve -> execute
+  governance/
+    pii_redaction.py                        Regex-based PII scrubbing before LLM calls
+    audit_log.py                             Structured JSONL audit trail
+    api_security.py                           API key auth + rate limiting
+    policies.yaml                             Explicit AI Ops / security / responsible-AI standards
+api.py                    FastAPI REST layer (authenticated, rate-limited)
+scripts/
+  make_sample_docs.py    generates sample_docs/*.{pdf,docx,html}
+  demo_cli.py             interactive CLI demo
+sample_docs/               generated sample PDF/DOCX/HTML files
+tests/
+  test_pipeline.py          13 tests: loading, chunking, retrieval, core agent loop
+  test_extended_capabilities.py   24 tests: vector DB, PII redaction, audit log, event bus,
+                                   ITSM, identity lifecycle, Power Automate, runbooks
+```

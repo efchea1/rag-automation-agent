@@ -1,0 +1,4 @@
+# Extra dependencies only needed to run the standalone Streamlit demo UI (app.py).
+# Everything in requirements.txt is still required underneath it.
+streamlit>=1.38
+python-dotenv>=1.0

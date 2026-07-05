@@ -1,0 +1,39 @@
+# Core document loading
+pypdf==5.9.0
+python-docx==1.2.0
+beautifulsoup4==4.14.3
+lxml==6.0.2
+
+# Retrieval
+scikit-learn==1.8.0
+rank-bm25==0.2.2
+numpy>=1.26
+chromadb==1.5.9
+
+# API layer
+fastapi==0.139.0
+uvicorn==0.50.0
+pydantic==2.13.4
+
+# LLM backends (install whichever you plan to use; optional at import time)
+anthropic>=0.40.0
+openai>=1.50.0          # also used for AzureOpenAIClient (openai.AzureOpenAI)
+
+# Cloud integrations
+boto3==1.43.40                  # AWS: S3 document source, Secrets Manager
+azure-identity==1.25.3          # Azure: DefaultAzureCredential (Blob, Key Vault, Graph)
+azure-storage-blob==12.30.0     # Azure: Blob Storage document source
+azure-keyvault-secrets>=4.8.0   # Azure: Key Vault (optional extra, imported lazily)
+
+# Microsoft identity / Power Platform
+msal==1.37.0             # Microsoft Graph auth (client-credentials flow)
+requests==2.33.1         # Graph API, ServiceNow, Power Automate webhook calls
+
+# Config
+pyyaml==6.0.3             # governance/policies.yaml
+
+# Dev / testing
+pytest==9.1.1
+
+# Only needed to regenerate sample_docs/*.pdf
+reportlab==4.4.10

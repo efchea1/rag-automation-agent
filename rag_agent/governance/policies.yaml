@@ -1,0 +1,71 @@
+# governance/policies.yaml
+#
+# Explicit, versioned standards document — the artifact referenced in the
+# job posting's "Establish standards for: AI Ops / Security and data
+# protection / Responsible AI usage / Operational resilience." This isn't
+# meant to be exhaustive policy language; it's the kind of machine-readable
+# standards file that CI/CD and the agent itself can check against (e.g.
+# "is PII redaction enabled for this deployment tier").
+
+ai_ops:
+  model_change_policy: >
+    Any change to the default LLM provider or model version requires a
+    recorded entry here plus a dry-run comparison against the existing
+    test suite (tests/test_pipeline.py) before promotion to production.
+  approved_providers:
+    - anthropic
+    - openai
+    - azure_openai
+  fallback_behavior: >
+    If no LLM provider is configured or reachable, the agent must fall
+    back to MockLLMClient and clearly flag responses as non-authoritative
+    rather than silently degrading or failing closed with no explanation.
+  observability_requirements:
+    - Every agent run must produce a full step trace (rewrite, retrieval,
+      answer, triage, action) suitable for audit logging.
+    - Retrieval scores must be logged for every query, not just top result.
+
+security_and_data_protection:
+  pii_handling: >
+    Text is passed through governance/pii_redaction.py before being sent
+    to any external LLM provider. Findings (category + count only, never
+    raw matched values) are recorded in the audit log.
+  secrets_management: >
+    Production deployments must source credentials (LLM API keys, ITSM
+    credentials, Power Automate webhook URLs) from a secrets manager
+    (AWS Secrets Manager or Azure Key Vault) rather than plaintext
+    environment variables or source control.
+  api_authentication: >
+    The REST API (api.py) requires an API key on all non-health endpoints.
+    See governance/api_security.py.
+  data_residency: >
+    Default retrieval backend (TF-IDF / offline embedding function) keeps
+    document content fully on-prem. Switching to a hosted embeddings API
+    is an explicit, reviewed configuration change, not a default.
+
+responsible_ai_usage:
+  grounding_requirement: >
+    The agent must answer only from retrieved context and must say so
+    explicitly when context does not contain an answer, rather than
+    guessing. Enforced via the answer-step system prompt in agent.py.
+  human_in_the_loop: >
+    Any action with real-world side effects (account creation/disablement,
+    ITSM ticket creation, Power Automate flow triggers, runbook execution)
+    must default to dry_run=True and requires an explicit human approval
+    step (see runbooks/executor.py) before executing for real.
+  escalation_default: >
+    When triage classification is uncertain or fails to parse, the agent
+    must default to the most conservative (human-review-required) path,
+    never to autonomous action.
+
+operational_resilience:
+  graceful_degradation: >
+    Every downstream integration (ITSM, Power Automate, cloud storage,
+    identity provider) must fail with a clear, actionable error rather
+    than crash the core agent loop. The retrieval/answer/triage/action
+    steps must complete even if a downstream integration is unavailable.
+  testing_requirement: >
+    Core pipeline logic (loading, chunking, retrieval, orchestration) must
+    remain testable with zero external dependencies via MockLLMClient,
+    MockPowerAutomateClient, MockServiceNowClient, and
+    MockGraphIdentityClient.
