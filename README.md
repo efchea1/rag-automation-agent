@@ -76,7 +76,7 @@ each one:
 - **No API security** → added `governance/api_security.py`: API key
   auth and a per-key token-bucket rate limiter, both wired into `api.py`.
 
-Four bugs were caught and fixed during development and live testing,
+Six bugs were caught and fixed during development and live testing,
 worth naming rather than hiding:
 
 1. **Mock LLM step misrouting.** The mock LLM's step dispatch originally
@@ -109,6 +109,35 @@ worth naming rather than hiding:
    across multiple runbooks, the matcher now declines to guess and returns
    `None` rather than arbitrarily picking one. Covered by regression tests
    for both the specific failing query and a synthetic tie case.
+5. **PDF text extraction artifact broke sentence-boundary detection.**
+   Found via testing with a real user-uploaded PDF: some PDF generators
+   (often Word/Google Docs exports) put a newline after nearly every
+   single word, which `pypdf`'s `extract_text()` reproduces verbatim.
+   This happened to still read correctly downstream only by accident —
+   the chunker's paragraph-splitting fragmented every word into its own
+   "paragraph" and coincidentally rejoined them with single spaces, which
+   would not have held up on a differently-shaped PDF with the same
+   quirk. Fixed with `_normalize_pdf_whitespace()`, which collapses any
+   whitespace run that isn't a real paragraph break down to a single
+   space while preserving genuine paragraph structure. (A first attempt
+   at this fix had its own bug — a `\u2029` placeholder character used to
+   protect paragraph breaks during the collapse turned out to be
+   classified as whitespace by Python's own regex engine, so it got eaten
+   by the very step it was supposed to survive. Caught by testing the fix
+   itself before shipping it, and replaced with a non-whitespace
+   placeholder.)
+6. **Full local file paths leaked into citations and the LLM's own answer
+   text.** Found via a real deployed instance: uploaded files were stored
+   at their full absolute path (e.g. a Windows temp directory including
+   the local username), and that path was used as the document's
+   identifier throughout — surfacing in retrieval results, in the text
+   block sent to the LLM as a source label, and consequently reproduced
+   verbatim inside the model's own generated citations. Fixed at the
+   loader level: `source_path` is now always just the filename, with the
+   full path preserved separately in `metadata['full_path']` for any
+   internal use that might need it. Fixing it at the source meant
+   citations, LLM context, and audit records were all fixed by the one
+   change, rather than needing separate patches at each display point.
 
 
 
@@ -171,7 +200,7 @@ worth naming rather than hiding:
   `MockGraphIdentityClient`, `MockServiceNowClient`,
   `MockPowerAutomateClient` — the entire pipeline, including the
   event-driven auto-escalation path, is unit tested end-to-end with zero
-  API keys, zero tenant credentials, and zero network access. 41 tests,
+  API keys, zero tenant credentials, and zero network access. 44 tests,
   all passing (`tests/test_pipeline.py` + `tests/test_extended_capabilities.py`).
 - **Governance as a file, not a slide.** `governance/policies.yaml` is a
   machine-readable standards document covering AI Ops, security and data
@@ -191,7 +220,7 @@ pip install -r requirements.txt
 # Generate the three generic sample documents (PDF, DOCX, HTML)
 python scripts/make_sample_docs.py
 
-# Run the full test suite (41 tests, no API keys or credentials needed)
+# Run the full test suite (44 tests, no API keys or credentials needed)
 pytest -v
 
 # Try it from the CLI (uses a real LLM if ANTHROPIC_API_KEY, AZURE_OPENAI_*,
@@ -291,7 +320,8 @@ scripts/
   demo_cli.py             interactive CLI demo
 sample_docs/               generated sample PDF/DOCX/HTML files
 tests/
-  test_pipeline.py          15 tests: loading, chunking, retrieval, core agent loop, triage JSON parsing
+  test_pipeline.py          18 tests: loading, chunking, retrieval, core agent loop,
+                                   triage JSON parsing, PDF whitespace normalization, path privacy
   test_extended_capabilities.py   26 tests: vector DB, PII redaction, audit log, event bus,
                                    ITSM, identity lifecycle, Power Automate, runbooks
 ```
