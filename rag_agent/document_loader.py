@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import mimetypes
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -34,6 +35,32 @@ class Document:
         return f"Document(type={self.source_type}, path={self.source_path}, text='{preview}...')"
 
 
+def _normalize_pdf_whitespace(text: str) -> str:
+    """
+    Some PDF generators (often Word/Google Docs exports with justified or
+    per-run-spaced text) emit a newline after nearly every single word
+    rather than normal inline spaces — pypdf's extract_text() then
+    reproduces that as "word1\n \nword2\n \nword3...". Left alone, this
+    fragments the chunker's paragraph-splitting (which splits on "\n")
+    into one "paragraph" per word, which happens to still read correctly
+    downstream only because the chunker rejoins single-word fragments
+    with spaces — an accidental save, not something to rely on. A
+    differently-shaped PDF with the same quirk but longer per-line runs
+    could easily produce genuinely glued-together words instead.
+
+    This collapses any whitespace run that is NOT a real paragraph break
+    (i.e., doesn't contain two or more newlines) down to a single space,
+    while preserving genuine paragraph breaks as "\n\n" — so real
+    paragraph structure survives, but the word-per-line artifact doesn't.
+    """
+    paragraph_marker = "\x00PARAGRAPH_BREAK\x00"  # non-whitespace placeholder; \u2029 would be
+    # eaten by the \s+ collapse below since Python's regex treats it as whitespace too
+    text = re.sub(r"\n{2,}", paragraph_marker, text)
+    text = re.sub(r"\s+", " ", text)
+    text = text.replace(paragraph_marker, "\n\n")
+    return text.strip()
+
+
 def _load_pdf(path: Path) -> Document:
     from pypdf import PdfReader
 
@@ -41,14 +68,14 @@ def _load_pdf(path: Path) -> Document:
     pages_text = []
     for i, page in enumerate(reader.pages):
         text = page.extract_text() or ""
-        pages_text.append(text)
+        pages_text.append(_normalize_pdf_whitespace(text))
 
     full_text = "\n\n".join(pages_text)
     return Document(
-        source_path=str(path),
+        source_path=path.name,
         source_type="pdf",
         text=full_text,
-        metadata={"num_pages": len(reader.pages)},
+        metadata={"num_pages": len(reader.pages), "full_path": str(path)},
     )
 
 
@@ -70,10 +97,10 @@ def _load_docx(path: Path) -> Document:
 
     full_text = "\n".join(parts)
     return Document(
-        source_path=str(path),
+        source_path=path.name,
         source_type="docx",
         text=full_text,
-        metadata={"num_paragraphs": len(doc.paragraphs)},
+        metadata={"num_paragraphs": len(doc.paragraphs), "full_path": str(path)},
     )
 
 
@@ -92,16 +119,16 @@ def _load_html(path: Path) -> Document:
     full_text = "\n".join(lines)
 
     return Document(
-        source_path=str(path),
+        source_path=path.name,
         source_type="html",
         text=full_text,
-        metadata={"title": title},
+        metadata={"title": title, "full_path": str(path)},
     )
 
 
 def _load_text(path: Path) -> Document:
     raw = path.read_text(encoding="utf-8", errors="ignore")
-    return Document(source_path=str(path), source_type="text", text=raw, metadata={})
+    return Document(source_path=path.name, source_type="text", text=raw, metadata={"full_path": str(path)})
 
 
 _LOADERS = {

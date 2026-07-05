@@ -227,6 +227,35 @@ class TestRunbookExecutor:
         runbook = self.executor.find_matching_runbook("what is the capital of France")
         assert runbook is None
 
+    def test_full_gateway_outage_does_not_wrongly_match_certificate_runbook(self):
+        """
+        Regression test: found via live testing with a real API key. A full
+        VPN gateway outage query contains the word "VPN", which used to be
+        enough on its own to wrongly match regenerate_vpn_certificate — a
+        single-user remediation runbook that makes no sense for an outage
+        affecting everyone. Exclusion keywords now prevent this.
+        """
+        query = "The VPN gateway is completely down and everyone is locked out, urgent"
+        runbook = self.executor.find_matching_runbook(query)
+        assert runbook is None, (
+            f"Expected no runbook match for a full outage, got {runbook.name if runbook else None}"
+        )
+
+    def test_ambiguous_tie_returns_none(self):
+        """A query matching two runbooks at equal top score should decline to guess."""
+        from rag_agent.runbooks.executor import Runbook, RunbookStep, RunbookExecutor
+
+        executor = RunbookExecutor()
+        executor.register(Runbook(
+            name="alpha", trigger_keywords=["shared_term"],
+            steps=[RunbookStep(name="s1", description="d", action=lambda **kw: None, requires_approval=False)],
+        ))
+        executor.register(Runbook(
+            name="beta", trigger_keywords=["shared_term"],
+            steps=[RunbookStep(name="s1", description="d", action=lambda **kw: None, requires_approval=False)],
+        ))
+        assert executor.find_matching_runbook("this has shared_term in it") is None
+
     def test_execution_blocked_without_approval(self):
         runbook = self.executor.find_matching_runbook("locked out repeatedly")
         result = self.executor.execute(runbook, user_principal_name="a@example.com")

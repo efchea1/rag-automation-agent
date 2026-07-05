@@ -43,6 +43,29 @@ class TestDocumentLoader:
         # script/nav/footer should be stripped or at least not dominate
         assert "<html>" not in doc.text
 
+    def test_source_path_is_filename_only_not_full_path(self, tmp_path):
+        """
+        Regression test: found via a real deployed Streamlit demo, where
+        uploaded files landed in a temp directory and the full absolute
+        path (including the local Windows username) was leaking into
+        citations, the LLM's own answer text, and the audit log. Loaders
+        must store only the filename in source_path; the full path is
+        still available in metadata['full_path'] for internal use only.
+        """
+        nested_dir = tmp_path / "some_user_specific_temp_folder" / "nested"
+        nested_dir.mkdir(parents=True)
+        original = SAMPLE_DIR / "vpn_troubleshooting_kb.html"
+        copied = nested_dir / "vpn_troubleshooting_kb.html"
+        copied.write_bytes(original.read_bytes())
+
+        doc = load_document(copied)
+
+        assert doc.source_path == "vpn_troubleshooting_kb.html"
+        assert "some_user_specific_temp_folder" not in doc.source_path
+        assert str(tmp_path) not in doc.source_path
+        # the full path must still be recoverable internally if ever needed
+        assert doc.metadata["full_path"] == str(copied)
+
     def test_unsupported_extension_raises(self, tmp_path):
         bad_file = tmp_path / "file.exe"
         bad_file.write_bytes(b"\x00\x01")
@@ -53,6 +76,29 @@ class TestDocumentLoader:
         docs = list(load_directory(SAMPLE_DIR))
         types = {d.source_type for d in docs}
         assert {"pdf", "docx", "html"}.issubset(types)
+
+    def test_pdf_whitespace_normalization_fixes_per_word_newlines(self):
+        """
+        Regression test: found via a real user-uploaded PDF. Some PDF
+        generators emit a newline after nearly every word, which pypdf's
+        extract_text() reproduces verbatim. Left unnormalized, this
+        fragments sentence-boundary detection in chunker.py. Confirms the
+        normalization in document_loader._normalize_pdf_whitespace collapses
+        this correctly while preserving real paragraph breaks.
+        """
+        from rag_agent.document_loader import _normalize_pdf_whitespace
+
+        artifact_text = (
+            "This\n \nSOP\n \nprovides\n \na\n \nstep-by-step\n \nprocedure\n \nfor\n \n"
+            "querying\n \nhospital\n \ndischarge\n \nregisters.\n\n"
+            "Next paragraph starts here."
+        )
+        normalized = _normalize_pdf_whitespace(artifact_text)
+
+        assert "\n \n" not in normalized
+        assert "This SOP provides a step-by-step procedure for querying hospital discharge registers." in normalized
+        # the real paragraph break (blank line) must survive normalization
+        assert "\n\nNext paragraph starts here." in normalized
 
 
 class TestChunker:
@@ -116,6 +162,61 @@ class TestAgentEndToEnd:
         empty_agent = RagAgent(llm_client=MockLLMClient())
         response = empty_agent.run("anything at all")
         assert response.citations == []
+
+    def test_triage_handles_markdown_fenced_json(self):
+        """
+        Regression test: real LLM providers frequently wrap JSON output in
+        markdown code fences even when told not to. Found via live testing
+        with a real Anthropic API key, where this caused every triage call
+        to silently fall back to a default classification.
+        """
+        fenced = (
+            '```json\n'
+            '{"category": "incident", "urgency": "high", '
+            '"recommended_action": "escalate_to_oncall", "rationale": "Outage reported."}\n'
+            '```'
+        )
+        extracted = RagAgent._extract_json(fenced)
+        import json
+        parsed = json.loads(extracted)  # must not raise
+        assert parsed["category"] == "incident"
+        assert parsed["urgency"] == "high"
+
+    def test_triage_handles_json_with_preamble_text(self):
+        """Some models add a short sentence before the JSON object despite instructions."""
+        messy = 'Here is the classification:\n{"category": "how_to_request", "urgency": "low", "recommended_action": "answer", "rationale": "ok"}'
+        extracted = RagAgent._extract_json(messy)
+        import json
+        parsed = json.loads(extracted)
+        assert parsed["category"] == "how_to_request"
+
+    def test_no_full_path_leaks_into_citations_or_llm_context(self, tmp_path):
+        """
+        Regression test: found via a real deployed Streamlit demo. A file
+        ingested from a deep, user-specific temp path (e.g. an uploaded
+        file) must never expose that full path in citations or in the
+        context block sent to the LLM — the LLM would otherwise reproduce
+        it verbatim in its own answer text, which is exactly what happened
+        before this fix.
+        """
+        deep_dir = tmp_path / "rag_agent_uploads_somehash123"
+        deep_dir.mkdir()
+        original = SAMPLE_DIR / "vpn_troubleshooting_kb.html"
+        copied = deep_dir / "vpn_troubleshooting_kb.html"
+        copied.write_bytes(original.read_bytes())
+
+        agent = RagAgent(llm_client=MockLLMClient())
+        agent.ingest_path(str(copied))
+        response = agent.run("VPN keeps failing with error code 3")
+
+        assert len(response.citations) > 0
+        for citation in response.citations:
+            assert str(deep_dir) not in citation.source_path
+            assert "rag_agent_uploads_somehash123" not in citation.source_path
+            assert citation.source_path == "vpn_troubleshooting_kb.html"
+
+        assert str(deep_dir) not in response.trace["context_block"]
+        assert "rag_agent_uploads_somehash123" not in response.trace["context_block"]
 
 
 if __name__ == "__main__":

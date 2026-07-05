@@ -26,6 +26,7 @@ of the mock placeholder text.
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import streamlit as st
@@ -77,6 +78,10 @@ if "pending_approval" not in st.session_state:
     st.session_state.pending_approval = None
 if "query_text" not in st.session_state:
     st.session_state.query_text = ""
+if "ingested_uploads" not in st.session_state:
+    st.session_state.ingested_uploads = set()
+if "upload_dir" not in st.session_state:
+    st.session_state.upload_dir = tempfile.mkdtemp(prefix="rag_agent_uploads_")
 
 st.title("RAG automation agent")
 st.caption(
@@ -86,9 +91,43 @@ st.caption(
     + (" (no API key set — using deterministic mock output)" if isinstance(agent.llm, MockLLMClient) else "")
 )
 
+st.subheader("Add your own documents")
+uploaded_files = st.file_uploader(
+    "Upload PDF, Word (.docx), or HTML files to add them to the index",
+    type=["pdf", "docx", "html", "htm", "txt"],
+    accept_multiple_files=True,
+)
+
+if uploaded_files:
+    newly_ingested = []
+    for uf in uploaded_files:
+        file_key = f"{uf.name}:{uf.size}"
+        if file_key in st.session_state.ingested_uploads:
+            continue  # already indexed this exact file this session; don't re-ingest on every rerun
+
+        dest_path = Path(st.session_state.upload_dir) / uf.name
+        with open(dest_path, "wb") as f:
+            f.write(uf.getbuffer())
+
+        try:
+            n = agent.ingest_path(str(dest_path))
+            st.session_state.ingested_uploads.add(file_key)
+            newly_ingested.append((uf.name, n))
+        except ValueError as exc:
+            st.error(f"Couldn't index `{uf.name}`: {exc}")
+
+    for name, n in newly_ingested:
+        st.success(f"Indexed `{name}` — {n} chunk(s) added to the index.")
+
 with st.expander("Indexed documents"):
+    st.write(f"Total indexed chunks: {len(agent._chunks)}")
+    st.caption("Sample documents (always indexed):")
     for path in sorted(SAMPLE_DIR.glob("*")):
         st.write(f"- `{path.name}`")
+    if st.session_state.ingested_uploads:
+        st.caption("Your uploaded documents:")
+        for key in sorted(st.session_state.ingested_uploads):
+            st.write(f"- `{key.rsplit(':', 1)[0]}`")
 
 examples = {
     "VPN issue with PII": "Contact me at jane.doe@example.com or 555-123-4567, my VPN keeps failing with error code 3",
