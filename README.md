@@ -350,3 +350,8 @@ tests/
   test_extended_capabilities.py   26 tests: vector DB, PII redaction, audit log, event bus,
                                    ITSM, identity lifecycle, Power Automate, runbooks
 ```
+
+## License
+
+All rights reserved — see [LICENSE](./LICENSE). This repository is public
+for demonstration and evaluation purposes only; it is not open source.
