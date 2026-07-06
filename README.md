@@ -234,6 +234,11 @@ worth naming rather than hiding:
   auditable beats "the model decided" for a security control. It's a
   first line of defense, not a guarantee — real deployments should pair
   it with provider data-handling agreements and real DLP tooling.
+- **The demo UI leads with plain language, not jargon.** `app.py` opens
+  with a one-sentence, non-technical description of what the system
+  does, followed by a collapsed "how this works" preview of the 8-step
+  pipeline — so someone doesn't need to have read this README first to
+  understand what they're about to see when they open the live demo.
 
 ## Running it
 
