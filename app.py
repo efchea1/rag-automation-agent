@@ -257,5 +257,10 @@ if st.session_state.history:
 
     st.subheader("8. Audit log (this session)")
     all_records = audit_logger.read_all()
-    st.json(all_records[-3:] if len(all_records) > 3 else all_records)
-    st.caption(f"{len(all_records)} record(s) written this session. Raw PII is never persisted.")
+    st.caption(
+        f"{len(all_records)} record(s) written this session. "
+        "Raw PII is never persisted — expand below to verify: the `query` "
+        "field shows a tag like `[REDACTED_EMAIL]` instead of your original text."
+    )
+    with st.expander("View raw audit records"):
+        st.json(all_records[-3:] if len(all_records) > 3 else all_records)
