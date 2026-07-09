@@ -1,0 +1,71 @@
+<svg width="680" height="900" viewBox="0 0 680 900" xmlns="http://www.w3.org/2000/svg" role="img">
+<title>RAG automation agent architecture</title>
+<desc>Documents and cloud storage flow into a document loader, then a chunker, then hybrid retrieval and a vector store, into the core agent loop, which branches on urgency to auto-escalation and on runbook match to guided remediation, ending in an audit log.</desc>
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+<style>
+rect,polygon{fill:#F1EFE8;stroke:#5F5E5A}
+.teal rect{fill:#E1F5EE;stroke:#0F6E56}
+.blue rect{fill:#E6F1FB;stroke:#185FA5}
+.coral rect{fill:#FAECE7;stroke:#993C1D}
+.gray polygon{fill:#F1EFE8;stroke:#5F5E5A}
+text{font-family:Arial,Helvetica,sans-serif;fill:#2C2C2A}
+.th{font-size:14px;font-weight:600}
+.ts{font-size:12px;fill:#5F5E5A}
+line,path{stroke:#5F5E5A}
+</style>
+
+<g class="gray"><rect x="200" y="40" width="280" height="56" rx="8"/>
+<text class="th" x="340" y="63" text-anchor="middle">Documents &amp; cloud storage</text>
+<text class="ts" x="340" y="81" text-anchor="middle">PDF, DOCX, HTML, TXT, S3, Blob</text></g>
+<line x1="340" y1="96" x2="340" y2="136" marker-end="url(#arrow)"/>
+
+<g class="teal"><rect x="200" y="136" width="280" height="56" rx="8"/>
+<text class="th" x="340" y="159" text-anchor="middle">document_loader.py</text>
+<text class="ts" x="340" y="177" text-anchor="middle">Normalize to text + metadata</text></g>
+<line x1="340" y1="192" x2="340" y2="232" marker-end="url(#arrow)"/>
+
+<g class="teal"><rect x="200" y="232" width="280" height="56" rx="8"/>
+<text class="th" x="340" y="255" text-anchor="middle">chunker.py</text>
+<text class="ts" x="340" y="273" text-anchor="middle">Sentence-aware overlapping chunks</text></g>
+<line x1="340" y1="288" x2="340" y2="322"/>
+
+<g class="blue"><rect x="90" y="322" width="220" height="56" rx="8"/>
+<text class="th" x="200" y="345" text-anchor="middle">retriever.py</text>
+<text class="ts" x="200" y="363" text-anchor="middle">Hybrid BM25 + TF-IDF</text></g>
+<g class="blue"><rect x="370" y="322" width="220" height="56" rx="8"/>
+<text class="th" x="480" y="345" text-anchor="middle">vector_store.py</text>
+<text class="ts" x="480" y="363" text-anchor="middle">ChromaDB vector search</text></g>
+<path d="M200 378L200 402L340 402" fill="none"/>
+<path d="M480 378L480 402L340 402L340 420" fill="none" marker-end="url(#arrow)"/>
+
+<g class="blue"><rect x="180" y="420" width="320" height="56" rx="8" stroke-width="1.5"/>
+<text class="th" x="340" y="443" text-anchor="middle">agent.py — RagAgent.run()</text>
+<text class="ts" x="340" y="461" text-anchor="middle">Redact, rewrite, answer, triage, plan</text></g>
+<line x1="340" y1="476" x2="340" y2="516" marker-end="url(#arrow)"/>
+
+<g class="gray"><polygon points="340,516 420,566 340,616 260,566"/>
+<text class="ts" x="340" y="570" text-anchor="middle">High urgency?</text></g>
+<line x1="420" y1="566" x2="456" y2="566" marker-end="url(#arrow)"/>
+<text class="ts" x="428" y="556">yes</text>
+<g class="coral"><rect x="456" y="538" width="180" height="56" rx="8"/>
+<text class="th" x="546" y="561" text-anchor="middle">Auto-escalation</text>
+<text class="ts" x="546" y="579" text-anchor="middle">ServiceNow + Power Automate</text></g>
+<line x1="340" y1="616" x2="340" y2="656" marker-end="url(#arrow)"/>
+<text class="ts" x="300" y="636">no</text>
+
+<g class="gray"><polygon points="340,656 420,706 340,756 260,706"/>
+<text class="ts" x="340" y="710" text-anchor="middle">Runbook matched?</text></g>
+<line x1="420" y1="706" x2="456" y2="706" marker-end="url(#arrow)"/>
+<text class="ts" x="428" y="696">yes</text>
+<g class="coral"><rect x="456" y="678" width="180" height="56" rx="8"/>
+<text class="th" x="546" y="701" text-anchor="middle">Guided remediation</text>
+<text class="ts" x="546" y="719" text-anchor="middle">Human approval, then execute</text></g>
+<line x1="340" y1="756" x2="340" y2="796" marker-end="url(#arrow)"/>
+<text class="ts" x="300" y="776">no</text>
+
+<g class="gray"><rect x="200" y="796" width="280" height="56" rx="8"/>
+<text class="th" x="340" y="819" text-anchor="middle">Audit log</text>
+<text class="ts" x="340" y="837" text-anchor="middle">Every run, PII already redacted</text></g>
+</svg>

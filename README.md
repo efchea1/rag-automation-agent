@@ -5,7 +5,7 @@ A working Retrieval-Augmented Generation (RAG) agent that ingests PDF, Word
 hybrid keyword search, and runs a full agentic pipeline over them: query
 rewriting, retrieval, grounded/cited answering, triage classification,
 guided-remediation runbook matching (with human approval gates), and
-downstream automation into ITSM, identity, and Power Automate — exposed as
+downstream automation into ITSM, identity, and Power Automate, exposed as
 a Python library, a CLI, and an authenticated REST API.
 
 A reference implementation of enterprise IT operations automation built
@@ -20,19 +20,19 @@ automation, event-driven triage).
 |---|---|
 | RAG pipelines over documentation, KB, tickets, logs | `document_loader.py` (PDF/DOCX/HTML/text) + `chunker.py` + `retriever.py` + `vector_store.py` |
 | Agentic AI workflows: automated triage, root-cause assistance, guided remediation | `agent.py` (rewrite → retrieve → answer → triage → action plan) + `runbooks/executor.py` (matched, previewable, approval-gated remediation) |
-| Multi-provider LLM integration (OpenAI, Anthropic, Microsoft) | `llm_client.py` — `AnthropicClient`, `OpenAIClient`, `AzureOpenAIClient` (key or Azure AD auth), all behind one `LLMClient` interface |
-| Microsoft Power Automate / Power Platform integration | `power_automate.py` — triggers HTTP-request-triggered flows; wired into `events/bus.py` for auto-notification on high-urgency incidents |
+| Multi-provider LLM integration (OpenAI, Anthropic, Microsoft) | `llm_client.py`, `AnthropicClient`, `OpenAIClient`, `AzureOpenAIClient` (key or Azure AD auth), all behind one `LLMClient` interface |
+| Microsoft Power Automate / Power Platform integration | `power_automate.py`, triggers HTTP-request-triggered flows; wired into `events/bus.py` for auto-notification on high-urgency incidents |
 | Cloud infrastructure: AWS and/or Azure | `cloud/aws_client.py` (S3 doc source, Secrets Manager) and `cloud/azure_client.py` (Blob Storage doc source, Key Vault) |
-| Identity and Access Management platforms | `identity/lifecycle.py` — Microsoft Graph client for create/disable accounts, group membership, session revocation |
-| ITSM tools | `itsm/servicenow_client.py` — creates/updates incidents via the ServiceNow Table API; auto-invoked on high-urgency triage |
+| Identity and Access Management platforms | `identity/lifecycle.py`, Microsoft Graph client for create/disable accounts, group membership, session revocation |
+| ITSM tools | `itsm/servicenow_client.py`, creates/updates incidents via the ServiceNow Table API; auto-invoked on high-urgency triage |
 | Employee onboarding/offboarding automation across identity, access, collaboration, endpoint systems | `identity/lifecycle.py` (`create_user`, `add_to_group`, `disable_account`, `revoke_sessions`, `remove_from_all_groups`) |
-| Knowledge retrieval systems, vector databases | `vector_store.py` — real ChromaDB-backed collection with a fully offline TF-IDF+SVD embedding function (swap-in-ready for a hosted model) |
-| Event-driven, AI-driven agentic operations | `events/bus.py` — pub/sub `EventBus` + `agent_event_handler` that runs the agent and auto-escalates from an event, not just a chat message |
+| Knowledge retrieval systems, vector databases | `vector_store.py`, real ChromaDB-backed collection with a fully offline TF-IDF+SVD embedding function (swap-in-ready for a hosted model) |
+| Event-driven, AI-driven agentic operations | `events/bus.py`, pub/sub `EventBus` + `agent_event_handler` that runs the agent and auto-escalates from an event, not just a chat message |
 | AI Ops / security & data protection / responsible AI / operational resilience standards | `governance/policies.yaml` (explicit standards doc) + `governance/pii_redaction.py` + `governance/audit_log.py` + `governance/api_security.py` |
 | Governance, risk, compliance for enterprise AI | `governance/` package as a whole; every agent run is auditable and PII-redacted before reaching an LLM provider |
 | Secure, scalable, observable, maintainable design | API key auth + rate limiting (`governance/api_security.py`), full step trace on every run, structured JSONL audit log |
-| Python, RESTful APIs | `api.py` — FastAPI service with `X-API-Key` auth and per-key rate limiting |
-| Augmenting IT teams rather than replacing them | Guided remediation defaults to `dry_run=True` and refuses to execute without `approved_by` — a human stays in the loop for anything with side effects |
+| Python, RESTful APIs | `api.py`, FastAPI service with `X-API-Key` auth and per-key rate limiting |
+| Augmenting IT teams rather than replacing them | Guided remediation defaults to `dry_run=True` and refuses to execute without `approved_by`, a human stays in the loop for anything with side effects |
 
 ## Development notes: gaps identified and closed, bugs found and fixed
 
@@ -86,7 +86,7 @@ worth naming rather than hiding:
    of relying on string matching.
 2. **Audit log recorded pre-redaction text.** The audit logger originally
    recorded `AgentResponse.original_query` (the raw, pre-redaction text)
-   even when PII redaction had already run — meaning redacted emails and
+   even when PII redaction had already run, meaning redacted emails and
    phone numbers were still ending up in the audit log. Fixed so the audit
    record always uses the redacted query.
 3. **Triage classification silently fell back on real LLM output.** Found
@@ -103,7 +103,7 @@ worth naming rather than hiding:
    via live testing: a full VPN gateway outage query ("everyone is locked
    out, the gateway is completely down") contains the word "vpn," which
    alone was enough to wrongly match a single-user certificate-regeneration
-   runbook — nonsensical for an outage affecting everyone. Fixed by adding
+   runbook, nonsensical for an outage affecting everyone. Fixed by adding
    per-runbook exclusion phrases (`Runbook.exclude_keywords`) and
    tie-detection in `find_matching_runbook()`: if the top score is tied
    across multiple runbooks, the matcher now declines to guess and returns
@@ -113,14 +113,14 @@ worth naming rather than hiding:
    Found via testing with a real user-uploaded PDF: some PDF generators
    (often Word/Google Docs exports) put a newline after nearly every
    single word, which `pypdf`'s `extract_text()` reproduces verbatim.
-   This happened to still read correctly downstream only by accident —
+   This happened to still read correctly downstream only by accident,
    the chunker's paragraph-splitting fragmented every word into its own
    "paragraph" and coincidentally rejoined them with single spaces, which
    would not have held up on a differently-shaped PDF with the same
    quirk. Fixed with `_normalize_pdf_whitespace()`, which collapses any
    whitespace run that isn't a real paragraph break down to a single
    space while preserving genuine paragraph structure. (A first attempt
-   at this fix had its own bug — a `\u2029` placeholder character used to
+   at this fix had its own bug, a `\u2029` placeholder character used to
    protect paragraph breaks during the collapse turned out to be
    classified as whitespace by Python's own regex engine, so it got eaten
    by the very step it was supposed to survive. Caught by testing the fix
@@ -130,7 +130,7 @@ worth naming rather than hiding:
    text.** Found via a real deployed instance: uploaded files were stored
    at their full absolute path (e.g. a Windows temp directory including
    the local username), and that path was used as the document's
-   identifier throughout — surfacing in retrieval results, in the text
+   identifier throughout, surfacing in retrieval results, in the text
    block sent to the LLM as a source label, and consequently reproduced
    verbatim inside the model's own generated citations. Fixed at the
    loader level: `source_path` is now always just the filename, with the
@@ -140,8 +140,8 @@ worth naming rather than hiding:
    change, rather than needing separate patches at each display point.
 7. **Path traversal in the file upload feature.** A security review
    (rather than a runtime failure) surfaced this one: the uploaded
-   file's name — fully attacker-controlled, since it's whatever the
-   uploading browser reports — was used directly to build the save path.
+   file's name, fully attacker-controlled, since it's whatever the
+   uploading browser reports, was used directly to build the save path.
    A crafted filename like `../../../etc/something`, or an absolute path,
    could write outside the intended upload directory. Confirmed
    exploitable with a direct test before fixing. Fixed by sanitizing to a
@@ -158,54 +158,21 @@ worth naming rather than hiding:
    industry-wide, not fully solvable class of vulnerability for RAG
    systems generally, but the system prompts were hardened to explicitly
    instruct the model to treat retrieved context strictly as reference
-   data, never as commands — raising the bar even though it can't
+   data, never as commands, raising the bar even though it can't
    eliminate the risk entirely. Real-world impact is further bounded by
    the human-approval gate on anything with actual side effects.
 
 
-
 ## Architecture
 
-```
- PDF/DOCX/HTML/TXT         S3 / Blob Storage
-        │                        │
-        ▼                        ▼
- document_loader.py  ◄── cloud/aws_client.py, cloud/azure_client.py
-        │
-        ▼
- chunker.py            sentence-aware overlapping chunks
-        │
-        ├──► retriever.py     HybridRetriever (BM25 + TF-IDF), zero-dependency default
-        └──► vector_store.py  ChromaVectorStore (real vector DB, offline embedding fn)
-        │
-        ▼
- agent.py               RagAgent.run(query):
-                           1. redact PII (governance/pii_redaction.py)
-                           2. rewrite query
-                           3. retrieve top-k chunks
-                           4. answer with citations
-                           5. triage / classify
-                           6. generate action plan
-                           7. match a guided-remediation runbook, if any
-                           8. write an audit record (governance/audit_log.py)
-        │
-        ├──► api.py                    FastAPI: /ingest, /query, /health (API-key auth + rate limit)
-        ├──► scripts/demo_cli.py        interactive CLI
-        ├──► events/bus.py              EventBus — trigger the agent from a log alert / webhook,
-        │                                not just a typed question; auto-escalates on high urgency
-        │       ├──► itsm/servicenow_client.py     auto-opens an incident
-        │       └──► power_automate.py             auto-triggers a Flow (e.g. notify on-call)
-        └──► runbooks/executor.py       matched runbook → preview → human approval → execute
-                ├──► identity/lifecycle.py   (Microsoft Graph: revoke sessions, disable account, ...)
-                └──► itsm/servicenow_client.py (open a follow-up ticket)
-```
+![RAG automation agent architecture](docs/architecture.svg)
 
 ## Design choices worth knowing about
 
 - **Hybrid retrieval and a real vector database, both offline by
   default.** `HybridRetriever` (BM25 + TF-IDF) and `ChromaVectorStore`
   (persistent, real vector DB) both work with zero external API calls out
-  of the box — deliberately, because IT operations content often has
+  of the box, deliberately, because IT operations content often has
   data-residency constraints. Swapping in a hosted embeddings model
   (sentence-transformers, OpenAI, Voyage, Azure OpenAI embeddings) is a
   one-class change on either path.
@@ -221,23 +188,23 @@ worth naming rather than hiding:
   system, or account by accident.
 - **Mocks for every external integration.** `MockLLMClient`,
   `MockGraphIdentityClient`, `MockServiceNowClient`,
-  `MockPowerAutomateClient` — the entire pipeline, including the
+  `MockPowerAutomateClient`, the entire pipeline, including the
   event-driven auto-escalation path, is unit tested end-to-end with zero
   API keys, zero tenant credentials, and zero network access. 50 tests,
   all passing (`tests/test_pipeline.py` + `tests/test_extended_capabilities.py`).
 - **Governance as a file, not a slide.** `governance/policies.yaml` is a
   machine-readable standards document covering AI Ops, security and data
-  protection, responsible AI usage, and operational resilience — the kind
+  protection, responsible AI usage, and operational resilience, the kind
   of artifact that could actually gate a CI/CD promotion, not just
   describe intent.
 - **PII redaction is regex-based on purpose.** Deterministic and
   auditable beats "the model decided" for a security control. It's a
-  first line of defense, not a guarantee — real deployments should pair
+  first line of defense, not a guarantee, real deployments should pair
   it with provider data-handling agreements and real DLP tooling.
 - **The demo UI leads with plain language, not jargon.** `app.py` opens
   with a one-sentence, non-technical description of what the system
   does, followed by a collapsed "how this works" preview of the 8-step
-  pipeline — so someone doesn't need to have read this README first to
+  pipeline, so someone doesn't need to have read this README first to
   understand what they're about to see when they open the live demo.
 
 ## Running it
@@ -302,7 +269,7 @@ bus.publish(Event(event_type="log_alert", payload={"text": "VPN gateway down, ur
 ## What I'd still build next for a production deployment
 
 - A real (non-TF-IDF) embedding model behind `EmbeddingBackend` /
-  `vector_store.py` once network/model access is available — this repo
+  `vector_store.py` once network/model access is available, this repo
   ships an offline embedding function specifically so it runs with zero
   external dependencies out of the box.
 - Move the API's rate-limiter state out of single-process memory into
@@ -358,5 +325,5 @@ tests/
 
 ## License
 
-All rights reserved — see [LICENSE](./LICENSE). This repository is public
+All rights reserved, see [LICENSE](./LICENSE). This repository is public
 for demonstration and evaluation purposes only; it is not open source.
