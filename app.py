@@ -268,3 +268,10 @@ if st.session_state.history:
     )
     with st.expander("View raw audit records"):
         st.json(all_records[-3:] if len(all_records) > 3 else all_records)
+
+st.divider()
+st.caption(
+    "Built by Emmanuel Fle Chea · "
+    "[GitHub](https://github.com/efchea1/rag-automation-agent) · "
+    "[LinkedIn](https://www.linkedin.com/in/emmanuel-fle-chea/)"
+)

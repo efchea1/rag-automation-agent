@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head><title>POL-0107 - Incident Severity and Escalation Policy</title></head>
+<body>
+<nav>Knowledge Base &gt; IT Operations &gt; Policies</nav>
+<h1>POL-0107: Incident Severity and Escalation Policy</h1>
+<p>Applies to: all incidents logged with the IT Service Desk, including
+incidents raised automatically from monitoring alerts.</p>
+
+<h2>Severity Levels</h2>
+<ul>
+<li>Sev 1 (Critical): a core service is down for most or all users, or there
+is an active security incident. Examples: company-wide email outage, VPN
+gateway unavailable for all remote staff, suspected ransomware.</li>
+<li>Sev 2 (High): a core service is degraded, or a single site or department
+cannot work. Example: one office cannot reach the file server.</li>
+<li>Sev 3 (Medium): one user or a small group is affected and a workaround
+exists. Example: a single laptop cannot print.</li>
+<li>Sev 4 (Low): questions, how-to requests, and cosmetic issues.</li>
+</ul>
+
+<h2>Response Targets</h2>
+<ul>
+<li>Sev 1: acknowledge within 15 minutes, update stakeholders every 30 minutes.</li>
+<li>Sev 2: acknowledge within 1 hour, update every 2 hours.</li>
+<li>Sev 3: acknowledge within 4 business hours.</li>
+<li>Sev 4: acknowledge within 2 business days.</li>
+</ul>
+
+<h2>Escalation Path</h2>
+<ol>
+<li>Tier 1 Service Desk owns every incident at intake and assigns a severity.</li>
+<li>Sev 1 and Sev 2 incidents page the on-call engineer for the affected
+service immediately; do not wait for Tier 1 troubleshooting to finish.</li>
+<li>If a Sev 1 incident is not mitigated within 60 minutes, the on-call
+engineer escalates to the IT Operations Manager, who opens a bridge call.</li>
+<li>Any incident involving a suspected security breach is escalated to the
+Security team at once, regardless of severity.</li>
+</ol>
+
+<h2>After the Incident</h2>
+<p>Every Sev 1 incident requires a written post-incident review within five
+business days, covering timeline, root cause, customer impact, and follow-up
+actions with named owners. Sev 2 reviews are at the manager's discretion.</p>
+
+<footer>Last reviewed: internal IT knowledge base</footer>
+</body>
+</html>
