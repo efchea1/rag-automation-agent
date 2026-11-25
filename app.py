@@ -90,7 +90,7 @@ st.markdown(
     "classifies and escalates issues that need human attention."
 )
 st.caption(
-    "Real RagAgent from the delivered codebase — hybrid retrieval, PII redaction, "
+    "Real RagAgent from [this project's codebase](https://github.com/efchea1/rag-automation-agent) — hybrid retrieval, PII redaction, "
     "triage, auto-escalation, guided remediation, and audit logging. "
     f"LLM backend: `{type(agent.llm).__name__}`"
     + (" (no API key set — using deterministic mock output)" if isinstance(agent.llm, MockLLMClient) else "")
@@ -106,7 +106,7 @@ with st.expander("How this works — what happens when you click \"Run agent\"",
         "4. **Grounded answer** — the LLM answers using only the retrieved passages, with citations\n"
         "5. **Triage classification** — categorizes and rates the urgency of the request\n"
         "6. **Auto-escalation** — high-urgency incidents automatically open a ServiceNow ticket "
-        "and trigger a Power Automate notification\n"
+        "and trigger a Power Automate notification (simulated in this demo)\n"
         "7. **Guided remediation** — if a known pattern matches, a specific fix is proposed "
         "(and requires your approval before it would ever execute)\n"
         "8. **Audit log** — every step of every run is recorded, with PII already redacted"
@@ -114,9 +114,13 @@ with st.expander("How this works — what happens when you click \"Run agent\"",
 
 st.subheader("Add your own documents")
 uploaded_files = st.file_uploader(
-    "Upload PDF, Word (.docx), or HTML files to add them to the index",
+    "Upload PDF, Word (.docx), HTML, or text files to add them to the index",
     type=["pdf", "docx", "html", "htm", "txt"],
     accept_multiple_files=True,
+)
+st.caption(
+    "Demo only. Don't upload personal or confidential files. Uploads are visible "
+    "to other visitors and cleared when the app restarts."
 )
 
 if uploaded_files:
@@ -232,7 +236,7 @@ if st.session_state.history:
             source_documents=[c.source_path for c in response.citations],
         )
         power_automate_client.trigger_flow("notify_oncall", payload)
-        st.success(f"ServiceNow incident `{ticket.ticket_number}` auto-created, Power Automate `notify_oncall` triggered.")
+        st.success(f"ServiceNow incident `{ticket.ticket_number}` auto-created, Power Automate `notify_oncall` triggered (simulated in this demo).")
     else:
         st.write("Urgency is not high — no ticket opened, no flow triggered.")
 
