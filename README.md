@@ -286,41 +286,46 @@ bus.publish(Event(event_type="log_alert", payload={"text": "VPN gateway down, ur
 
 ```
 rag_agent/
-  document_loader.py   PDF / DOCX / HTML / text -> normalized Document
-  chunker.py             Document -> overlapping Chunks
-  retriever.py             Chunks -> HybridRetriever (BM25 + TF-IDF)
-  vector_store.py           Chunks -> ChromaVectorStore (real vector DB)
-  llm_client.py               LLMClient interface: Anthropic / OpenAI / Azure OpenAI / Mock
-  agent.py                      RagAgent: full orchestration + PII redaction + audit + runbook matching
-  power_automate.py               Power Automate flow trigger client
+  document_loader.py      PDF / DOCX / HTML / text -> normalized Document
+  chunker.py              Document -> overlapping chunks
+  retriever.py            Hybrid retrieval (BM25 + TF-IDF)
+  vector_store.py         ChromaDB vector store
+  llm_client.py           Anthropic / OpenAI / Azure OpenAI / Mock clients
+  agent.py                RagAgent: orchestration, PII redaction, audit, runbooks
+  power_automate.py       Power Automate flow trigger client
   cloud/
-    aws_client.py                  S3 document source, Secrets Manager
-    azure_client.py                 Blob Storage document source, Key Vault
+    aws_client.py         S3 document source, Secrets Manager
+    azure_client.py       Blob Storage document source, Key Vault
   identity/
-    lifecycle.py                     Microsoft Graph onboarding/offboarding automation
+    lifecycle.py          Microsoft Graph onboarding/offboarding
   itsm/
-    servicenow_client.py               ServiceNow incident creation/update
+    servicenow_client.py  ServiceNow incident creation/update
   events/
-    bus.py                               EventBus + agent_event_handler (event-driven ops)
+    bus.py                EventBus + agent_event_handler (event-driven ops)
   runbooks/
-    executor.py                           Guided remediation: match -> preview -> approve -> execute
+    executor.py           Guided remediation: match, preview, approve, execute
   governance/
-    pii_redaction.py                        Regex-based PII scrubbing before LLM calls
-    audit_log.py                             Structured JSONL audit trail
-    api_security.py                           API key auth + rate limiting
-    policies.yaml                             Explicit AI Ops / security / responsible-AI standards
+    pii_redaction.py      Regex-based PII scrubbing before LLM calls
+    audit_log.py          Structured JSONL audit trail
+    api_security.py       API key auth + rate limiting
+    policies.yaml         AI Ops / security / responsible-AI standards
+app.py                    Streamlit demo UI (the live demo)
 api.py                    FastAPI REST layer (authenticated, rate-limited)
 scripts/
-  make_sample_docs.py    generates sample_docs/*.{pdf,docx,html}
-  demo_cli.py             interactive CLI demo
-sample_docs/               generated sample PDF/DOCX/HTML files
+  make_sample_docs.py     Generates the sample documents
+  demo_cli.py             Interactive CLI demo
+sample_docs/              Sample PDF / DOCX / HTML files
+docs/
+  architecture.svg        Architecture diagram
 tests/
-  test_pipeline.py          24 tests: loading, chunking, retrieval, core agent loop,
-                                   triage JSON parsing, PDF whitespace normalization,
-                                   path privacy, upload path-traversal sanitization,
-                                   prompt-injection guard presence
-  test_extended_capabilities.py   26 tests: vector DB, PII redaction, audit log, event bus,
-                                   ITSM, identity lifecycle, Power Automate, runbooks
+  test_pipeline.py        24 tests: loading, chunking, retrieval, agent loop,
+                          JSON parsing, PDF whitespace, path privacy,
+                          path traversal, prompt-injection guard
+  test_extended_capabilities.py
+                          26 tests: vector DB, PII redaction, audit log,
+                          event bus, ITSM, identity, Power Automate, runbooks
+.streamlit/config.toml    Demo theme and toolbar settings
+
 ```
 
 ## License
