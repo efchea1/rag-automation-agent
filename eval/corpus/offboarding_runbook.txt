@@ -1,0 +1,14 @@
+Employee IT Offboarding Runbook
+
+Purpose
+This runbook covers removing access when an employee leaves the company.
+
+Steps
+1. HR records the leaving date, which creates an offboarding task for IT.
+2. On the last working day at 5pm local time, the identity account is disabled and all active sessions are revoked.
+3. Mailbox access transfers to the manager for 30 days, then the mailbox is archived.
+4. The employee returns the laptop and badge; remote employees receive a prepaid return box.
+5. Licenses are reclaimed and reassigned within 7 days.
+
+Immediate Terminations
+For involuntary terminations, HR notifies IT directly and access is disabled at the time HR specifies, not at end of day.

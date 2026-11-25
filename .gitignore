@@ -7,3 +7,5 @@ chroma.sqlite3
 *.egg-info/
 .venv/
 venv/
+
+!eval/questions.jsonl
