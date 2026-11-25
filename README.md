@@ -148,7 +148,7 @@ worth naming rather than hiding:
    could write outside the intended upload directory. Confirmed
    exploitable with a direct test before fixing. Fixed by sanitizing to a
    bare filename (stripping both `/`- and `\`-style traversal, since the
-   app runs locally on Windows as well as on via Render)
+   app runs locally on Windows as well as on Linux via Render)
    before the path is ever constructed. Covered by 5 regression tests
    spanning forward-slash, backslash, and absolute-path variants on both
    platforms.
