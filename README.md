@@ -8,6 +8,8 @@ guided-remediation runbook matching (with human approval gates), and
 downstream automation into ITSM, identity, and Power Automate, exposed as
 a Python library, a CLI, and an authenticated REST API.
 
+**Live demo:** [rag-automation-agent.onrender.com](https://rag-automation-agent.onrender.com/) (free hosting, so the first load after a quiet period can take about a minute)
+
 A reference implementation of enterprise IT operations automation built
 around RAG and agentic workflows: bridging everyday IT operations
 (identity, service management, incident response, onboarding/offboarding)
@@ -146,7 +148,7 @@ worth naming rather than hiding:
    could write outside the intended upload directory. Confirmed
    exploitable with a direct test before fixing. Fixed by sanitizing to a
    bare filename (stripping both `/`- and `\`-style traversal, since the
-   app runs locally on Windows as well as on Linux via Streamlit Cloud)
+   app runs locally on Windows as well as on via Render)
    before the path is ever constructed. Covered by 5 regression tests
    spanning forward-slash, backslash, and absolute-path variants on both
    platforms.
@@ -325,10 +327,11 @@ tests/
                           26 tests: vector DB, PII redaction, audit log,
                           event bus, ITSM, identity, Power Automate, runbooks
 .streamlit/config.toml    Demo theme and toolbar settings
-
-```
+LICENSE                   All rights reserved
+````
 
 ## License
 
 All rights reserved, see [LICENSE](./LICENSE). This repository is public
 for demonstration and evaluation purposes only; it is not open source.
+````
