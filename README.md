@@ -1,20 +1,192 @@
 # RAG Automation Agent
 
-A working Retrieval-Augmented Generation (RAG) agent that ingests PDF, Word
-(.docx), and HTML documents, indexes them in a real vector database plus
-hybrid keyword search, and runs a full agentic pipeline over them: query
-rewriting, retrieval, grounded/cited answering, triage classification,
-guided-remediation runbook matching (with human approval gates), and
-downstream automation into ITSM, identity, and Power Automate, exposed as
-a Python library, a CLI, and an authenticated REST API.
+![tests](https://github.com/efchea1/rag-automation-agent/actions/workflows/tests.yml/badge.svg)
 
 **Live demo:** [rag-automation-agent.onrender.com](https://rag-automation-agent.onrender.com/) (free hosting, so the first load after a quiet period can take about a minute)
 
-A reference implementation of enterprise IT operations automation built
-around RAG and agentic workflows: bridging everyday IT operations
-(identity, service management, incident response, onboarding/offboarding)
-with modern AI patterns (RAG, agentic orchestration, self-service
-automation, event-driven triage).
+An AI assistant for IT operations that answers questions from your own documents (PDF, Word, HTML,
+text) with cited sources, then triages, escalates and proposes remediation, exposed as a Python
+library, a CLI, an authenticated REST API and a Streamlit demo.
+
+## At a glance
+
+- **What it does:** retrieves relevant passages with hybrid search (BM25 keyword plus TF-IDF vector
+  similarity), writes a cited answer, rates urgency, auto-escalates high-urgency issues, and proposes
+  fixes that only run after a human approves them.
+- **What I measured:** retrieval recall@3 of 0.89 on single-document questions written in informal
+  phrasing; in one live run, 13/13 answers cited a correct source and 5/5 out-of-scope questions were
+  declined. 56 offline tests run on every push. Details in [Evaluation](#evaluation).
+- **What's real and what's mocked:** in the live demo, retrieval and the LLM (Anthropic) are real;
+  ServiceNow, Power Automate and Microsoft Graph are simulated. Their clients are real code that runs
+  against real systems once credentials are supplied.
+
+## Architecture
+
+![RAG automation agent architecture](docs/architecture.svg)
+
+## Running it
+
+```bash
+pip install -r requirements.txt
+
+# Optional: regenerate the PDF, DOCX and VPN HTML samples (all five samples are already in sample_docs/)
+python scripts/make_sample_docs.py
+
+# Run the full test suite (56 tests, no API keys or credentials needed)
+pytest -v
+
+# Measure retrieval quality (offline) and answer quality (uses the API key)
+python eval/run_retrieval_eval.py
+python eval/run_answer_eval.py
+
+# Try it from the CLI (uses a real LLM if ANTHROPIC_API_KEY, AZURE_OPENAI_*,
+# or OPENAI_API_KEY is set in the environment; otherwise falls back to mock)
+python scripts/demo_cli.py
+
+# Or run it as a REST API with auth enabled
+export RAG_AGENT_API_KEYS="some-secret-key"
+uvicorn api:app --reload --port 8000
+
+curl -X POST localhost:8000/ingest -H "X-API-Key: some-secret-key" \
+  -H "Content-Type: application/json" -d '{"path": "sample_docs"}'
+
+curl -X POST localhost:8000/query -H "X-API-Key: some-secret-key" \
+  -H "Content-Type: application/json" -d '{"query": "VPN keeps failing with error code 3"}'
+```
+
+### Wiring in the enterprise integrations
+
+Everything below is real, runnable code — it just needs real credentials
+to talk to real systems (all included clients raise a clear error if
+credentials are missing, rather than silently no-op'ing):
+
+```python
+from rag_agent.agent import RagAgent
+from rag_agent.identity.lifecycle import GraphIdentityClient
+from rag_agent.itsm.servicenow_client import ServiceNowClient
+from rag_agent.power_automate import PowerAutomateClient
+from rag_agent.runbooks.executor import build_default_runbooks
+from rag_agent.events.bus import EventBus, Event, agent_event_handler
+from rag_agent.governance.audit_log import AuditLogger
+
+graph = GraphIdentityClient()       # reads AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
+itsm = ServiceNowClient()           # reads SERVICENOW_INSTANCE_URL / _USERNAME / _PASSWORD
+power_automate = PowerAutomateClient()  # reads POWER_AUTOMATE_FLOW_<NAME> env vars
+
+agent = RagAgent(
+    runbook_executor=build_default_runbooks(graph, itsm),
+    audit_logger=AuditLogger(log_path="audit.jsonl"),
+)
+agent.ingest_path("sample_docs")
+
+bus = EventBus()
+bus.subscribe("log_alert", agent_event_handler(agent, itsm_client=itsm, power_automate_client=power_automate))
+bus.publish(Event(event_type="log_alert", payload={"text": "VPN gateway down, urgent"}, source="log_watcher"))
+# -> agent triages it, and because urgency=high, auto-opens a ServiceNow incident
+#    and triggers the "notify_oncall" Power Automate flow, with no human needing
+#    to have typed the question at all.
+```
+
+## Evaluation
+
+I measured retrieval quality instead of asserting it. Everything below can be reproduced with
+`python eval/run_retrieval_eval.py` (offline, free) and `python eval/run_answer_eval.py` (uses the API).
+
+**Question set.** `eval/questions.jsonl` holds 18 questions, written from the document titles only and
+before any retrieval results were inspected, in informal employee phrasing rather than the documents'
+own wording: 9 single-document, 4 multi-document, 5 unanswerable. After the set was written, I read the
+documents to fill in each `answer_phrase`, and relabelled one question (s02, about reset-link expiry)
+as unanswerable because no document covers it. Three single-document questions are only partly
+covered by the documents; each is marked with a `note`.
+
+**How a hit is scored.**
+- *Single-document:* a hit at k means one of the top-k chunks comes from the expected document **and**
+  contains the answer phrase. Labels are phrases, not chunk IDs, so they survive changes to chunk size.
+- *Multi-document:* a hit at k means every expected document appears in the top k. Recall@1 is
+  impossible by definition, so it is shown as n/a. MRR uses the rank at which the *last* expected
+  document appears, so a two-document question scores at most 0.50 and a three-document question at
+  most 0.33. Multi-document MRR is therefore not comparable with the single-document column.
+- *Unanswerable:* not scored offline; see answer checks below.
+
+**Distractors.** `eval/corpus/` adds 7 similar-topic documents (MFA next to password reset, virtual
+desktop next to VPN, change management next to incident escalation, and so on), so retrieval has to
+choose between near neighbours. They are not indexed in the live demo.
+
+### Retrieval results (2026-11-24, no LLM query rewrite)
+
+| Corpus | Question type | n | recall@1 | recall@3 | recall@5 | MRR |
+|---|---|---|---|---|---|---|
+| Demo (5 docs, 12 chunks) | single | 9 | 0.78 | 0.89 | 0.89 | 0.83 |
+| Demo (5 docs, 12 chunks) | multi | 4 | n/a | 0.75 | 0.75 | 0.33 |
+| With distractors (12 docs, 20 chunks) | single | 9 | 0.78 | 0.78 | 0.89 | 0.80 |
+| With distractors (12 docs, 20 chunks) | multi | 4 | n/a | 0.75 | 0.75 | 0.33 |
+
+**Settings behind the numbers:** chunk size 800 characters, overlap 150, agent top_k 5, BM25 and
+vector weights 0.5 / 0.5, vector component TF-IDF cosine (scikit-learn, English stop words). The eval
+reads these from `RagAgent` and `HybridRetriever` defaults, so it cannot drift from the app.
+`HybridRetriever.search()` is called with the raw question, so these numbers measure retrieval
+*without* the LLM query rewrite that `RagAgent.run()` performs first.
+
+**Misses and why.**
+- *"How fast does someone have to respond to a serious outage?"* misses at every k up to 5. The right
+  document ranks first, but the wrong chunk: the chunk boundary falls just after the "Response Targets"
+  heading, so the targets themselves ("acknowledge within 15 minutes") land in the next chunk, which
+  ranks sixth. The question also shares no words with the answer ("serious" vs "Sev 1", "respond" vs
+  "acknowledge"). Likely fixes: heading-aware chunking, and a real embedding model in place of TF-IDF.
+- *"The app I need won't install and it's blocking a production fix"* never retrieves the incident
+  escalation policy, which says "incident" and "core service", not "production". With distractors, the
+  change-management policy (which does say "production") takes that slot instead. The LLM query
+  rewrite is meant to bridge this kind of vocabulary gap, and it does: see the answer checks below.
+- With distractors, *"What do I need to do on my first day with my laptop?"* drops from rank 2 to
+  rank 5. Once several documents mention "laptop", the word stops being distinctive, and the short
+  change-management chunk wins on the keyword side by matching generic words like "need" and "day"
+  (the BM25 tokenizer splits on whitespace and keeps stop words). A stop-word list for BM25 is a
+  cheap fix worth testing against this eval.
+
+**Regression test.** `tests/test_retrieval_eval.py` runs offline in about a second and fails if
+recall@3 drops below floors set just under these scores (0.80 / 0.70 for single-document, 0.50 for
+multi-document). It also checks that every answer phrase exists in its expected document and in no
+distractor, so the labels stay sound.
+
+### Answer checks (manual, uses the API)
+
+`eval/run_answer_eval.py` runs every question through the real `RagAgent.run()` and checks that each
+answer cites at least one source, cites only documents that were actually retrieved, and cites an
+expected document; that unanswerable questions are declined; and whether retrieval after the LLM query
+rewrite finds what the raw question missed. A run costs well under US$0.50. All answers are saved to
+`eval/results/` for review, because the decline check is a phrase heuristic.
+
+Results from one run on 2026-11-24 (demo corpus, AnthropicClient default model):
+
+| Check | Result |
+|---|---|
+| Answerable: cites at least one source | 13/13 |
+| Answerable: cites only retrieved documents | 13/13 |
+| Answerable: cites an expected document | 13/13 |
+| Answerable: retrieval hit@5 after query rewrite | 13/13 (vs 11/13 on the raw question) |
+| Unanswerable: declined | 5/5 (checked by reading each answer) |
+
+**What this shows.** The LLM query rewrite fixed both retrieval misses above: rewriting
+"serious outage" and "production fix" into incident and severity language brought the right chunks into
+the top 5. For the near-miss question about reset-link expiry, the agent retrieved and cited the password
+policy but said it does not cover reset links, instead of inventing a time limit. On multi-document
+questions the answers usually cite only some of the expected documents (for example, the VPN-outage
+question cites the escalation policy but not the VPN KB), so the citation check counts one expected
+document as a pass.
+
+Reading the five unanswerable answers: all five state clearly that the documents do not cover the
+question, and none invents an answer. Two habits are worth noting. The agent often adds general advice
+that is not from the documents (for example, "check the reset email itself"), and once it attached a
+loose citation to that advice (pointing a Wi-Fi password question to the onboarding runbook). A stricter
+answer prompt could limit suggestions to what the documents support.
+
+**Caveats.** This is a single run, and LLM output varies between runs, so treat these as one sample
+rather than a stable rate. The citation checks are mechanical; whether each answer is *correct* was
+not scored automatically.
+
+**Known limits.** Retrieval scores are normalised per query (the top result always scores 1.00), so
+there is no "not covered" score threshold, and declining depends on the prompt alone. 18 questions is
+a small set: one question moves single-document recall by 0.11 and multi-document recall by 0.25.
 
 ## Capability map
 
@@ -28,7 +200,7 @@ automation, event-driven triage).
 | Identity and Access Management platforms | `identity/lifecycle.py`, Microsoft Graph client for create/disable accounts, group membership, session revocation |
 | ITSM tools | `itsm/servicenow_client.py`, creates/updates incidents via the ServiceNow Table API; auto-invoked on high-urgency triage |
 | Employee onboarding/offboarding automation across identity, access, collaboration, endpoint systems | `identity/lifecycle.py` (`create_user`, `add_to_group`, `disable_account`, `revoke_sessions`, `remove_from_all_groups`) |
-| Knowledge retrieval systems, vector databases | `vector_store.py`, real ChromaDB-backed collection with a fully offline TF-IDF+SVD embedding function (swap-in-ready for a hosted model) |
+| Knowledge retrieval systems, vector databases | `retriever.py` (hybrid BM25 + TF-IDF, used by the agent) and `vector_store.py` (ChromaDB collection with an offline TF-IDF+SVD embedding function, tested on its own and not yet on the agent's query path) |
 | Event-driven, AI-driven agentic operations | `events/bus.py`, pub/sub `EventBus` + `agent_event_handler` that runs the agent and auto-escalates from an event, not just a chat message |
 | AI Ops / security & data protection / responsible AI / operational resilience standards | `governance/policies.yaml` (explicit standards doc) + `governance/pii_redaction.py` + `governance/audit_log.py` + `governance/api_security.py` |
 | Governance, risk, compliance for enterprise AI | `governance/` package as a whole; every agent run is auditable and PII-redacted before reaching an LLM provider |
@@ -36,7 +208,55 @@ automation, event-driven triage).
 | Python, RESTful APIs | `api.py`, FastAPI service with `X-API-Key` auth and per-key rate limiting |
 | Augmenting IT teams rather than replacing them | Guided remediation defaults to `dry_run=True` and refuses to execute without `approved_by`, a human stays in the loop for anything with side effects |
 
-## Development notes: gaps identified and closed, bugs found and fixed
+## Design choices worth knowing about
+
+- **Hybrid retrieval and a real vector database, both offline by
+  default.** `HybridRetriever` (BM25 + TF-IDF) and `ChromaVectorStore`
+  (persistent, real vector DB) both work with zero external API calls out
+  of the box, deliberately, because IT operations content often has
+  data-residency constraints. The agent's query path uses `HybridRetriever`;
+  `ChromaVectorStore` is built and tested, ready to replace it. Swapping in a hosted embeddings model
+  (sentence-transformers, OpenAI, Voyage, Azure OpenAI embeddings) is a
+  one-class change on either path.
+- **Provider-agnostic LLM client, including the Microsoft path.**
+  `agent.py` never imports a vendor SDK directly. `AzureOpenAIClient`
+  supports both static API keys and Azure AD auth via
+  `DefaultAzureCredential`, since enterprise tenants frequently mandate AD
+  auth over long-lived keys.
+- **Every mutating integration defaults to dry-run.** `identity/lifecycle.py`
+  Graph calls, `runbooks/executor.py` execution, and the Power Automate
+  client all either default to `dry_run=True` or require an explicit
+  `approved_by`. Nothing in this codebase mutates a real tenant, ticket
+  system, or account by accident.
+- **Mocks for every external integration.** `MockLLMClient`,
+  `MockGraphIdentityClient`, `MockServiceNowClient`,
+  `MockPowerAutomateClient`, the entire pipeline, including the
+  event-driven auto-escalation path, is unit tested end-to-end with zero
+  API keys, zero tenant credentials, and zero network access. 56 tests,
+  all passing (`tests/test_pipeline.py`, `tests/test_extended_capabilities.py`,
+  and the retrieval regression floors in `tests/test_retrieval_eval.py`).
+- **Governance as a file, not a slide.** `governance/policies.yaml` is a
+  machine-readable standards document covering AI Ops, security and data
+  protection, responsible AI usage, and operational resilience, the kind
+  of artifact that could actually gate a CI/CD promotion, not just
+  describe intent.
+- **PII redaction is regex-based on purpose.** Deterministic and
+  auditable beats "the model decided" for a security control. It's a
+  first line of defense, not a guarantee, real deployments should pair
+  it with provider data-handling agreements and real DLP tooling.
+- **The demo UI leads with plain language, not jargon.** `app.py` opens
+  with a one-sentence, non-technical description of what the system
+  does, followed by a collapsed "how this works" preview of the 8-step
+  pipeline, so someone doesn't need to have read this README first to
+  understand what they're about to see when they open the live demo.
+
+## Development notes: gaps closed and bugs fixed
+
+Ten capability gaps closed and eight bugs found and fixed during development and live testing,
+including a path-traversal hole in uploads and raw PII reaching the audit log.
+
+<details>
+<summary>Show the full list</summary>
 
 An earlier iteration of this project covered the core RAG/agentic loop but
 had real gaps against a full enterprise IT automation scope. Rather than
@@ -56,7 +276,9 @@ each one:
   `vector_store.py`, a real ChromaDB collection with persistence support.
   The embedding function is still offline-by-default (TF-IDF+SVD) so the
   system runs with zero external dependencies, but the storage/query layer
-  is now a genuine vector database, not a workaround.
+  is now a genuine vector database, not a workaround. It is tested on its
+  own; the agent's query path still uses `HybridRetriever` (see What I'd
+  still build next).
 - **No actual onboarding/offboarding automation, just a document about
   it** → added `identity/lifecycle.py`, a Microsoft Graph client that
   actually creates/disables accounts and manages group membership
@@ -164,216 +386,15 @@ worth naming rather than hiding:
    eliminate the risk entirely. Real-world impact is further bounded by
    the human-approval gate on anything with actual side effects.
 
-
-## Architecture
-
-![RAG automation agent architecture](docs/architecture.svg)
-
-## Design choices worth knowing about
-
-- **Hybrid retrieval and a real vector database, both offline by
-  default.** `HybridRetriever` (BM25 + TF-IDF) and `ChromaVectorStore`
-  (persistent, real vector DB) both work with zero external API calls out
-  of the box, deliberately, because IT operations content often has
-  data-residency constraints. Swapping in a hosted embeddings model
-  (sentence-transformers, OpenAI, Voyage, Azure OpenAI embeddings) is a
-  one-class change on either path.
-- **Provider-agnostic LLM client, including the Microsoft path.**
-  `agent.py` never imports a vendor SDK directly. `AzureOpenAIClient`
-  supports both static API keys and Azure AD auth via
-  `DefaultAzureCredential`, since enterprise tenants frequently mandate AD
-  auth over long-lived keys.
-- **Every mutating integration defaults to dry-run.** `identity/lifecycle.py`
-  Graph calls, `runbooks/executor.py` execution, and the Power Automate
-  client all either default to `dry_run=True` or require an explicit
-  `approved_by`. Nothing in this codebase mutates a real tenant, ticket
-  system, or account by accident.
-- **Mocks for every external integration.** `MockLLMClient`,
-  `MockGraphIdentityClient`, `MockServiceNowClient`,
-  `MockPowerAutomateClient`, the entire pipeline, including the
-  event-driven auto-escalation path, is unit tested end-to-end with zero
-  API keys, zero tenant credentials, and zero network access. 56 tests,
-  all passing (`tests/test_pipeline.py`, `tests/test_extended_capabilities.py`,
-  and the retrieval regression floors in `tests/test_retrieval_eval.py`).
-- **Governance as a file, not a slide.** `governance/policies.yaml` is a
-  machine-readable standards document covering AI Ops, security and data
-  protection, responsible AI usage, and operational resilience, the kind
-  of artifact that could actually gate a CI/CD promotion, not just
-  describe intent.
-- **PII redaction is regex-based on purpose.** Deterministic and
-  auditable beats "the model decided" for a security control. It's a
-  first line of defense, not a guarantee, real deployments should pair
-  it with provider data-handling agreements and real DLP tooling.
-- **The demo UI leads with plain language, not jargon.** `app.py` opens
-  with a one-sentence, non-technical description of what the system
-  does, followed by a collapsed "how this works" preview of the 8-step
-  pipeline, so someone doesn't need to have read this README first to
-  understand what they're about to see when they open the live demo.
-
-## Running it
-
-```bash
-pip install -r requirements.txt
-
-# Optional: regenerate the PDF, DOCX and VPN HTML samples (all five samples are already in sample_docs/)
-python scripts/make_sample_docs.py
-
-# Run the full test suite (56 tests, no API keys or credentials needed)
-pytest -v
-
-# Measure retrieval quality (offline) and answer quality (uses the API key)
-python eval/run_retrieval_eval.py
-python eval/run_answer_eval.py
-
-# Try it from the CLI (uses a real LLM if ANTHROPIC_API_KEY, AZURE_OPENAI_*,
-# or OPENAI_API_KEY is set in the environment; otherwise falls back to mock)
-python scripts/demo_cli.py
-
-# Or run it as a REST API with auth enabled
-export RAG_AGENT_API_KEYS="some-secret-key"
-uvicorn api:app --reload --port 8000
-
-curl -X POST localhost:8000/ingest -H "X-API-Key: some-secret-key" \
-  -H "Content-Type: application/json" -d '{"path": "sample_docs"}'
-
-curl -X POST localhost:8000/query -H "X-API-Key: some-secret-key" \
-  -H "Content-Type: application/json" -d '{"query": "VPN keeps failing with error code 3"}'
-```
-
-### Wiring in the enterprise integrations
-
-Everything below is real, runnable code — it just needs real credentials
-to talk to real systems (all included clients raise a clear error if
-credentials are missing, rather than silently no-op'ing):
-
-```python
-from rag_agent.agent import RagAgent
-from rag_agent.identity.lifecycle import GraphIdentityClient
-from rag_agent.itsm.servicenow_client import ServiceNowClient
-from rag_agent.power_automate import PowerAutomateClient
-from rag_agent.runbooks.executor import build_default_runbooks
-from rag_agent.events.bus import EventBus, Event, agent_event_handler
-from rag_agent.governance.audit_log import AuditLogger
-
-graph = GraphIdentityClient()       # reads AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET
-itsm = ServiceNowClient()           # reads SERVICENOW_INSTANCE_URL / _USERNAME / _PASSWORD
-power_automate = PowerAutomateClient()  # reads POWER_AUTOMATE_FLOW_<NAME> env vars
-
-agent = RagAgent(
-    runbook_executor=build_default_runbooks(graph, itsm),
-    audit_logger=AuditLogger(log_path="audit.jsonl"),
-)
-agent.ingest_path("sample_docs")
-
-bus = EventBus()
-bus.subscribe("log_alert", agent_event_handler(agent, itsm_client=itsm, power_automate_client=power_automate))
-bus.publish(Event(event_type="log_alert", payload={"text": "VPN gateway down, urgent"}, source="log_watcher"))
-# -> agent triages it, and because urgency=high, auto-opens a ServiceNow incident
-#    and triggers the "notify_oncall" Power Automate flow, with no human needing
-#    to have typed the question at all.
-```
-
-## Evaluation
-
-I measured retrieval quality instead of asserting it. Everything below can be reproduced with
-`python eval/run_retrieval_eval.py` (offline, free) and `python eval/run_answer_eval.py` (uses the API).
-
-**Question set.** `eval/questions.jsonl` holds 18 questions, written from the document titles only and
-before any retrieval results were inspected, in informal employee phrasing rather than the documents'
-own wording: 9 single-document, 4 multi-document, 5 unanswerable. After the set was written, I read the
-documents to fill in each `answer_phrase`, and relabelled one question (s02, about reset-link expiry)
-as unanswerable because no document covers it. Three single-document questions are only partly
-covered by the documents; each is marked with a `note`.
-
-**How a hit is scored.**
-- *Single-document:* a hit at k means one of the top-k chunks comes from the expected document **and**
-  contains the answer phrase. Labels are phrases, not chunk IDs, so they survive changes to chunk size.
-- *Multi-document:* a hit at k means every expected document appears in the top k. Recall@1 is
-  impossible by definition, so it is shown as n/a.
-- *Unanswerable:* not scored offline; see answer checks below.
-
-**Distractors.** `eval/corpus/` adds 7 similar-topic documents (MFA next to password reset, virtual
-desktop next to VPN, change management next to incident escalation, and so on), so retrieval has to
-choose between near neighbours. They are not indexed in the live demo.
-
-### Retrieval results (2026-11-24, no LLM query rewrite)
-
-| Corpus | Question type | n | recall@1 | recall@3 | recall@5 | MRR |
-|---|---|---|---|---|---|---|
-| Demo (5 docs, 12 chunks) | single | 9 | 0.78 | 0.89 | 0.89 | 0.83 |
-| Demo (5 docs, 12 chunks) | multi | 4 | n/a | 0.75 | 0.75 | 0.33 |
-| With distractors (12 docs, 20 chunks) | single | 9 | 0.78 | 0.78 | 0.89 | 0.80 |
-| With distractors (12 docs, 20 chunks) | multi | 4 | n/a | 0.75 | 0.75 | 0.33 |
-
-**Settings behind the numbers:** chunk size 800 characters, overlap 150, agent top_k 5, BM25 and
-vector weights 0.5 / 0.5, vector component TF-IDF cosine (scikit-learn, English stop words). The eval
-reads these from `RagAgent` and `HybridRetriever` defaults, so it cannot drift from the app.
-`HybridRetriever.search()` is called with the raw question, so these numbers measure retrieval
-*without* the LLM query rewrite that `RagAgent.run()` performs first.
-
-**Misses and why.**
-- *"How fast does someone have to respond to a serious outage?"* misses at every k up to 5. The right
-  document ranks first, but the wrong chunk: the chunk boundary falls just after the "Response Targets"
-  heading, so the targets themselves ("acknowledge within 15 minutes") land in the next chunk, which
-  ranks sixth. The question also shares no words with the answer ("serious" vs "Sev 1", "respond" vs
-  "acknowledge"). Likely fixes: heading-aware chunking, and a real embedding model in place of TF-IDF.
-- *"The app I need won't install and it's blocking a production fix"* never retrieves the incident
-  escalation policy, which says "incident" and "core service", not "production". With distractors, the
-  change-management policy (which does say "production") takes that slot instead. The LLM query
-  rewrite is meant to bridge this kind of vocabulary gap, and it does: see the answer checks below.
-- With distractors, *"What do I need to do on my first day with my laptop?"* drops from rank 2 to
-  rank 5. Once several documents mention "laptop", the word stops being distinctive, and the short
-  change-management chunk wins on the keyword side by matching generic words like "need" and "day"
-  (the BM25 tokenizer splits on whitespace and keeps stop words). A stop-word list for BM25 is a
-  cheap fix worth testing against this eval.
-
-**Regression test.** `tests/test_retrieval_eval.py` runs offline in about a second and fails if
-recall@3 drops below floors set just under these scores (0.80 / 0.70 for single-document, 0.50 for
-multi-document). It also checks that every answer phrase exists in its expected document and in no
-distractor, so the labels stay sound.
-
-### Answer checks (manual, uses the API)
-
-`eval/run_answer_eval.py` runs every question through the real `RagAgent.run()` and checks that each
-answer cites at least one source, cites only documents that were actually retrieved, and cites an
-expected document; that unanswerable questions are declined; and whether retrieval after the LLM query
-rewrite finds what the raw question missed. A run costs well under US$0.50. All answers are saved to
-`eval/results/` for review, because the decline check is a phrase heuristic.
-
-Results from one run on 2026-11-24 (demo corpus, AnthropicClient default model):
-
-| Check | Result |
-|---|---|
-| Answerable: cites at least one source | 13/13 |
-| Answerable: cites only retrieved documents | 13/13 |
-| Answerable: cites an expected document | 13/13 |
-| Answerable: retrieval hit@5 after query rewrite | 13/13 (vs 11/13 on the raw question) |
-| Unanswerable: declined | 5/5 (checked by reading each answer) |
-
-**What this shows.** The LLM query rewrite fixed both retrieval misses above: rewriting
-"serious outage" and "production fix" into incident and severity language brought the right chunks into
-the top 5. For the near-miss question about reset-link expiry, the agent retrieved and cited the password
-policy but said it does not cover reset links, instead of inventing a time limit. On multi-document
-questions the answers usually cite only some of the expected documents (for example, the VPN-outage
-question cites the escalation policy but not the VPN KB), so the citation check counts one expected
-document as a pass.
-
-Reading the five unanswerable answers: all five state clearly that the documents do not cover the
-question, and none invents an answer. Two habits are worth noting. The agent often adds general advice
-that is not from the documents (for example, "check the reset email itself"), and once it attached a
-loose citation to that advice (pointing a Wi-Fi password question to the onboarding runbook). A stricter
-answer prompt could limit suggestions to what the documents support.
-
-**Caveats.** This is a single run, and LLM output varies between runs, so treat these as one sample
-rather than a stable rate. The citation checks are mechanical; whether each answer is *correct* was
-not scored automatically.
-
-**Known limits.** Retrieval scores are normalised per query (the top result always scores 1.00), so
-there is no "not covered" score threshold, and declining depends on the prompt alone. 18 questions is
-a small set: one question moves single-document recall by 0.11 and multi-document recall by 0.25.
+</details>
 
 ## What I'd still build next for a production deployment
 
+- Put `ChromaVectorStore` on the agent's query path (it is built and tested but
+  `RagAgent` still retrieves through `HybridRetriever`), then rerun the
+  evaluation to compare.
+- Heading-aware chunking and a BM25 stop-word list, the two cheapest fixes
+  for the retrieval misses found in [Evaluation](#evaluation).
 - A real (non-TF-IDF) embedding model behind `EmbeddingBackend` /
   `vector_store.py` once network/model access is available, this repo
   ships an offline embedding function specifically so it runs with zero
@@ -438,6 +459,7 @@ tests/
                           event bus, ITSM, identity, Power Automate, runbooks
   test_retrieval_eval.py  6 tests: label soundness, recall@3 floors
 .streamlit/config.toml    Demo theme and toolbar settings
+.github/workflows/tests.yml  Runs the test suite on every push
 LICENSE                   All rights reserved
 ```
 
